@@ -1,0 +1,36 @@
+[
+  { "id": "dashboard", "name": "Dashboard", "href": "/dashboard", "icon": "layout-dashboard", "children": [] },
+  { "id": "compliance", "name": "Tuân thủ", "href": "/compliance", "icon": "shield-check", "children": [
+    { "name": "CTS_1 – Chất hạn chế", "href": "/compliance/cts-1" },
+    { "name": "CTS_2 – IQC / OQC", "href": "/compliance/cts-2" },
+    { "name": "CTS_3 – VOC / SVHC", "href": "/compliance/cts-3" },
+    { "name": "Tuyên bố tuân thủ", "href": "/compliance/declarations" }
+  ] },
+  { "id": "materials", "name": "Vật liệu & Báo cáo thử nghiệm", "href": "/materials", "icon": "package-search", "children": [
+    { "name": "Danh mục vật liệu", "href": "/materials" },
+    { "name": "Hồ sơ nhà cung cấp", "href": "/materials/suppliers" },
+    { "name": "Báo cáo thử nghiệm", "href": "/materials/test-reports" },
+    { "name": "Tuyên bố / Declaration", "href": "/materials/declarations" }
+  ] },
+  { "id": "management", "name": "Quản lý", "href": "/management", "icon": "briefcase", "children": [
+    { "name": "Cơ cấu tổ chức & DRI", "href": "/management/organization" },
+    { "name": "Đào tạo", "href": "/management/training" },
+    { "name": "Công đoạn rủi ro cao", "href": "/management/high-risk-processes" },
+    { "name": "Non-Conformity", "href": "/management/non-conformity" },
+    { "name": "CAPA", "href": "/management/capa" }
+  ] },
+  { "id": "documents", "name": "Trung tâm tài liệu", "href": "/documents", "icon": "folder-open", "children": [
+    { "name": "Quy trình & Tiêu chuẩn", "href": "/documents/procedures" },
+    { "name": "Hồ sơ", "href": "/documents/records" },
+    { "name": "Lưu mẫu / Lưu dữ liệu", "href": "/documents/retention" },
+    { "name": "Phụ lục", "href": "/documents/appendices" }
+  ] },
+  { "id": "settings", "name": "Cài đặt", "href": "/settings", "icon": "settings", "children": [
+    { "name": "Quản lý người dùng", "href": "/settings/users" },
+    { "name": "Vai trò & Phân quyền", "href": "/settings/roles" },
+    { "name": "Master Data", "href": "/settings/master-data" },
+    { "name": "Cài đặt thông báo", "href": "/settings/notifications" },
+    { "name": "Quy định lưu trữ", "href": "/settings/retention" },
+    { "name": "Cấu hình hệ thống", "href": "/settings/system" }
+  ] }
+]

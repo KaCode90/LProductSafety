@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dang nhap - Apple Product Safety</title>
+    <link rel="icon" href="/static/logo.jpg" type="image/jpeg">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState } = React;
+
+        function App() {
+            const [isLogin, setIsLogin] = useState(true);
+            const [username, setUsername] = useState('');
+            const [password, setPassword] = useState('');
+            const [error, setError] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                setError('');
+                const url = isLogin ? '/api/login' : '/api/register';
+                
+                fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                })
+                .then(res => {
+                    return res.json().then(data => ({ status: res.status, ok: res.ok, data }));
+                })
+                .then(({ status, ok, data }) => {
+                    if (ok) {
+                        if (isLogin) {
+                            localStorage.setItem('token', data.token);
+                            localStorage.setItem('user', JSON.stringify({username: data.username, avatar_url: data.avatar_url, role: data.role}));
+                            window.location.href = '/';
+                        } else {
+                            alert('Dang ky thanh cong! Vui long dang nhap.');
+                            setIsLogin(true);
+                        }
+                    } else {
+                        setError(data.detail || 'Co loi xay ra');
+                    }
+                })
+                .catch(err => {
+                    setError('Khong the ket noi den server');
+                });
+            };
+
+            return (
+                <div className="w-full max-w-md p-8 space-y-8 bg-white rounded-xl shadow-lg border border-gray-100">
+                    <div className="text-center">
+                        <img src="/static/logo.jpg" alt="Apple QA Logo" className="w-24 h-24 mx-auto mb-4 object-contain" />
+                        <h2 className="text-3xl font-extrabold text-gray-900">
+                            {isLogin ? 'Dang nhap he thong' : 'Dang ky tai khoan'}
+                        </h2>
+                        <p className="mt-2 text-sm text-gray-600">
+                            Apple Product Safety Management
+                        </p>
+                    </div>
+                    <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+                        <div className="space-y-4 rounded-md shadow-sm">
+                            <div>
+                                <label className="sr-only">Ten dang nhap</label>
+                                <input name="username" type="text" required
+                                    className="relative block w-full px-3 py-2 text-gray-900 placeholder-gray-500 border border-gray-300 rounded-md appearance-none focus:z-10 focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                                    placeholder="Ten dang nhap" value={username} onChange={e => setUsername(e.target.value)} />
+                            </div>
+                            <div>
+                                <label className="sr-only">Mat khau</label>
+                                <input name="password" type="password" required
+                                    className="relative block w-full px-3 py-2 text-gray-900 placeholder-gray-500 border border-gray-300 rounded-md appearance-none focus:z-10 focus:border-blue-500 focus:outline-none focus:ring-blue-500 sm:text-sm"
+                                    placeholder="Mat khau" value={password} onChange={e => setPassword(e.target.value)} />
+                            </div>
+                        </div>
+
+                        {error && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</div>}
+
+                        <div>
+                            <button type="submit" className="relative flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-blue-800 border border-transparent rounded-md group hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 shadow-sm transition-colors">
+                                {isLogin ? 'Dang nhap' : 'Dang ky'}
+                            </button>
+                        </div>
+                    </form>
+                    <div className="text-center mt-4">
+                        <button onClick={() => { setIsLogin(!isLogin); setError(''); }} className="text-sm font-medium text-blue-600 hover:text-blue-500">
+                            {isLogin ? 'Chua co tai khoan? Dang ky ngay' : 'Da co tai khoan? Dang nhap'}
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
