@@ -130,7 +130,8 @@ def sign_in(body: Credentials, request: Request, response: Response, db: Session
 
 @router.get('/api/auth/me')
 def me(request: Request, user: Account = Depends(current_user)):
-    return {'user': profile(user), 'csrf': request.state.session.csrf}
+    login_at = request.state.session.expires - timedelta(hours=8)
+    return {'user': profile(user), 'csrf': request.state.session.csrf, 'login_at': login_at.isoformat() + 'Z'}
 
 
 @router.post('/api/auth/logout')

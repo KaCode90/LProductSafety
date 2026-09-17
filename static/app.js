@@ -1,12 +1,53 @@
 import {esc,label,badge,dateText,timeText,sourceText,percent,empty} from './ui.js?v=7';
 const $=s=>document.querySelector(s);
 const content=$('#content'),modal=$('#modal');
-let user,csrf,catalog,overview,requestId=0,currentModule='',listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc'},toastTimer;
+function getOptimalPageSize(){
+  const vh = window.innerHeight || 900;
+  const count = Math.floor((vh - 250) / 31.5);
+  if(count <= 16) return 15;
+  if(count <= 22) return 20;
+  return 25;
+}
+let loginAt,user,csrf,catalog,overview,requestId=0,currentModule='',listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:getOptimalPageSize()},toastTimer;
 let currentDetail=null;
 const icons={dashboard:'◫',compliance:'◇',xrf:'◉',materials:'▣',management:'♙',documents:'▤',settings:'⚙'};
 const names={'inspection-plans':'Kế hoạch kiểm nghiệm',imports:'Nguồn Excel & đối chiếu','xrf-trend':'Xu hướng XRF & thực hiện kế hoạch',users:'Quản lý người dùng',roles:'Vai trò & Phân quyền',notifications:'Cài đặt thông báo',retention:'Quy định lưu trữ',system:'Cấu hình hệ thống'};
 
-async function api(path,options={}){const headers={...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),'X-CSRF-Token':csrf||'',...(options.headers||{})};const response=await fetch('/api'+path,{...options,headers});if(response.status===401){location.replace('/login');throw Error('Phiên đã hết hạn.');}let data;try{data=await response.json();}catch{throw Error('Phản hồi máy chủ không hợp lệ.');}if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Dữ liệu không hợp lệ. Kiểm tra các trường bắt buộc.');return data;}
+function loginTimeText(value){
+  if(!value)return '—';
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return '—';
+  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(date).map(p=>[p.type,p.value]));
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+async function api(path, options = {}) {
+  const headers = {
+    ...(options.body instanceof FormData ? {} : {'Content-Type': 'application/json'}),
+    'X-CSRF-Token': csrf || '',
+    ...(options.headers || {})
+  };
+  const response = await fetch('/api' + path, { ...options, headers });
+  if (response.status === 401) {
+    location.replace('/login');
+    throw Error('Phiên đã hết hạn.');
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw Error('Phản hồi máy chủ không hợp lệ.');
+  }
+  if (!response.ok) {
+    let msg = 'Dữ liệu không hợp lệ. Kiểm tra các trường bắt buộc.';
+    if (typeof data?.detail === 'string') {
+      msg = data.detail;
+    } else if (Array.isArray(data?.detail) && data.detail.length > 0) {
+      msg = data.detail.map(e => e.msg ? `${e.loc?.slice(-1)[0] || 'Trường'}: ${e.msg}` : JSON.stringify(e)).join('; ');
+    }
+    throw Error(msg);
+  }
+  return data;
+}
 function notify(text){clearTimeout(toastTimer);$('#toast').textContent=text;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,5500);}
 function goto(route){if(location.hash==='#/'+route)render();else location.hash='/'+route;}
 function title(id){return catalog.modules[id]?.title||names[id]||'Product Safety';}
@@ -16,19 +57,18 @@ function openModal(name,body,footer=''){
   if(!modal.open)modal.showModal();
   modal.querySelector('[data-close]').onclick=()=>modal.close();
 }
-function confirmAction(message,action){
-  openModal('Xác nhận',`<p>${esc(message)}</p>`,`<button id="cancel-confirm">Hủy</button><button id="accept-confirm" class="primary">Xác nhận</button>`);
+function confirmAction(text,action){
+  openModal('Xác nhận',`<p>${esc(text)}</p>`,`<button id="cancel-confirm">Hủy</button><button id="accept-confirm" class="danger">Đồng ý</button>`);
   $('#cancel-confirm').onclick=()=>modal.close();
   $('#accept-confirm').onclick=async e=>{
     e.target.disabled=true;
-    try{await action();modal.close();}
-    catch(error){notify(error.message);e.target.disabled=false;}
+    try{await action();modal.close();}catch(error){notify(error.message);}finally{if($('#accept-confirm'))$('#accept-confirm').disabled=false;}
   };
 }
 function nav(active){
   $('#navigation').innerHTML=catalog.groups.map(group=>{
     const items=group.items.filter(item=>!catalog.modules[item.id]||can(item.id,'View'));
-    const expanded=items.some(item=>item.id===active)||active==='group/'+group.id;
+    const expanded=items.some(item=>item.id===active)||active==='group/'+group.id||(group.id==='settings'&&(active==='bom'||active==='product-bom'));
     return `<section class="nav-section"><button class="nav-group" data-group="${esc(group.id)}" aria-expanded="${expanded}" aria-controls="submenu-${esc(group.id)}"><span class="nav-icon">${icons[group.id]||'◇'}</span><span class="nav-label">${esc(group.name)}</span>${group.id!=='dashboard'?'<span class="nav-arrow">⌄</span>':''}</button><div class="nav-children" id="submenu-${esc(group.id)}" ${!expanded||group.id==='dashboard'?'hidden':''}>${items.map(item=>`<a class="nav-link ${item.id===active?'active':''}" href="#/${esc(item.id)}" ${item.id===active?'aria-current="page"':''}>${esc(item.name)}</a>`).join('')}</div></section>`;
   }).join('');
   $('#navigation').querySelectorAll('[data-group]').forEach(button=>button.onclick=()=>{
@@ -42,8 +82,8 @@ function head(name,description='',actions=''){const desc=description?`<p style="
 function paginationHtml(currentPage, totalItems, pageSize, attrName='data-page', prevId='prev-page', nextId='next-page') {
   currentPage = Number(currentPage) || 1;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  if (totalPages <= 1) {
-    return `<div class="pagination"><span>Tổng số: <b>${totalItems}</b> mục (1 trang)</span></div>`;
+  if (totalPages < 1) {
+    return `<div class="pagination"><span>Tổng số: <b>${totalItems}</b> mục</span></div>`;
   }
   const startPage = Math.max(1, currentPage - 2);
   const endPage = Math.min(totalPages, startPage + 4);
@@ -55,7 +95,7 @@ function paginationHtml(currentPage, totalItems, pageSize, attrName='data-page',
   return `<div class="pagination"><span><b>${totalItems}</b> mục · Trang <b>${currentPage}</b> / ${totalPages}</span><nav style="display:flex;align-items:center;gap:4px"><button type="button" id="${prevId}" ${currentPage <= 1 ? 'disabled' : ''}>← Trước</button>${pageButtons}<button type="button" id="${nextId}" ${currentPage >= totalPages ? 'disabled' : ''}>Sau →</button></nav></div>`;
 }
 const columnPreferences = {
-  materials: ['material_code', 'material_name', 'supplier', 'manufacturer', 'project'],
+  materials: ['material_code', 'material_name', 'category', 'supplier', 'project'],
   bom: ['project', 'parent_code', 'material_code', 'material_name', 'supplier'],
   suppliers: ['supplier', 'manufacturer', 'contact', 'email', 'phone'],
   'test-plan': ['project', 'material_code', 'material_name', 'test_type', 'test'],
@@ -98,9 +138,9 @@ function rowTable(rows, columns=['name','module','status']) {
   };
   return `<div class="table-scroll"><table><thead><tr>${columns.map(c => `<th>${colLabels[c] || c}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map(r => `<tr>${columns.map(c => `<td>${c === 'name' ? `<button class="link-button" data-open="${r.id}">${esc(label(r))}</button>` : c === 'module' ? esc(title(r.module)) : c === 'status' ? badge(r.display_status) : c === 'dri' ? esc(r.data?.dri || 'Chưa phân công') : c === 'expiry' ? dateText(r.data?.expiry_date || r.data?.due_date) : esc(r.data?.[c] ?? '—')}</td>`).join('')}<td><button class="link-button" data-open="${r.id}">👁️ Chi tiết</button></td></tr>`).join('')}</tbody></table></div>`;
 }
-let dashboardElement='pb';
+let dashboardElement='pb',dashboardMaterialType='Polymers';
   async function dashboard(){
-    const [d,iqc,oqc]=await Promise.all([api('/overview'),api('/xrf-trend?stage=IQC&element='+dashboardElement),api('/xrf-trend?stage=OQC&element='+dashboardElement)]);
+    const [d,iqc,oqc]=await Promise.all([api('/overview'),api('/xrf-trend?stage=IQC&element='+dashboardElement+'&material_type='+encodeURIComponent(dashboardMaterialType)),api('/xrf-trend?stage=OQC&element='+dashboardElement+'&material_type='+encodeURIComponent(dashboardMaterialType))]);
     overview=d;$('#notification-count').textContent=d.open_actions??0;
     
     // Tầng 1: Management KPI (4 cards across full width)
@@ -128,7 +168,7 @@ let dashboardElement='pb';
     </div>`;
 
     // Tầng 2: Technical Monitoring (IQC & OQC side-by-side with full responsive chart height)
-    const tier2 = `<div class="dashboard-tier tier-2" style="width:100%"><section class="card" style="width:100%;margin:0;display:flex;flex-direction:column;height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid #f1f5f9"><div><h3 style="margin:0;font-size:12.5px;font-weight:700;color:#1e293b">XRF MONITORING</h3><small style="color:#64748b;font-size:11px">Đo lường huỳnh quang tia X phân tích hàm lượng kim loại nặng</small></div><div style="display:flex;gap:10px;align-items:center"><label style="display:flex;gap:6px;align-items:center;font-size:11px;margin:0;color:#475569">Chất phân tích <select id="dashboard-element" style="padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#fff">${['pb','cd','hg','cr','br','cl'].map(e=>`<option value="${e}" ${e===dashboardElement?'selected':''}>${e.toUpperCase()}</option>`).join('')}</select></label><label style="display:flex;gap:6px;align-items:center;font-size:11px;margin:0;color:#475569">Thời gian <select disabled style="padding:3px 8px;font-size:11px;border-radius:4px;border:1px solid #cbd5e1;background:#f8fafc"><option>6 tháng gần nhất</option></select></label></div></div><div class="quality-trends" style="display:flex;gap:12px;padding:10px 14px;flex:1;min-height:0">${dashboardTrend('IQC XRF Trend',iqc,'IQC')}${dashboardTrend('OQC XRF Trend',oqc,'OQC')}</div></section></div>`;
+    const tier2 = `<div class="dashboard-tier tier-2" style="width:100%"><section class="card xrf-monitoring-card"><div class="xrf-monitoring-toolbar"><h3><span class="xrf-heading-mark" aria-hidden="true">⌁</span>XRF Monitoring</h3><div class="xrf-monitoring-filters"><label class="xrf-filter"><span>Chất phân tích</span><select id="dashboard-element">${['pb','cd','hg','cr','br','cl'].map(e=>`<option value="${e}" ${e===dashboardElement?'selected':''}>${e.toUpperCase()}</option>`).join('')}</select></label><label class="xrf-filter xrf-filter-material"><span>Nhóm vật liệu</span><select id="dashboard-material-type">${['Polymers','Metals/Ceramic/Glass','Composite','Packaging'].map(t=>`<option ${t===dashboardMaterialType?'selected':''}>${t}</option>`).join('')}</select></label><span class="xrf-period" aria-label="Thời gian hiển thị: 6 tháng gần nhất"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4m10-4v4M3 11h18"/></svg>6 tháng gần nhất</span></div></div><div class="quality-trends" style="display:flex;gap:12px;padding:10px 14px;flex:1;min-height:0">${dashboardTrend('IQC XRF Trend',iqc,'IQC',iqc.control_limit)}${dashboardTrend('OQC XRF Trend',oqc,'OQC',oqc.control_limit)}</div></section></div>`;
     
     // Tầng 3: Risk & Action
     const coverage = d.coverage;
@@ -178,7 +218,7 @@ let dashboardElement='pb';
     </div>`;
 
     const tier3 = `<div class="dashboard-tier tier-3" style="display:flex;gap:12px;width:100%">
-      <section class="card" style="flex:1.25;margin:0;display:flex;flex-direction:column;min-height:0;height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid #f1f5f9"><h3 style="margin:0;font-size:12.5px;font-weight:700;color:#1e293b">VIỆC CẦN XỬ LÝ</h3><button id="dashboard-alerts" style="padding:2px 8px;font-size:10.5px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;cursor:pointer">Xem tất cả (${d.open_actions})</button></div>${actionListHtml}</section>
+      <section class="card" style="flex:1.25;margin:0;display:flex;flex-direction:column;min-height:0;height:100%"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid #f1f5f9"><h3 style="margin:0;font-size:12.5px;font-weight:700;color:#1e293b">VIỆC CẦN XỬ LÝ</h3><button id="dashboard-alerts" style="padding:2px 8px;font-size:10.5px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;cursor:pointer">Xem tất cả (${d.alerts ? d.alerts.length : 0})</button></div>${actionListHtml}</section>
       
       <section class="card" style="flex:1;margin:0;display:flex;flex-direction:column;min-height:0;height:100%"><div class="card-header" style="padding:8px 16px;border-bottom:1px solid #f1f5f9"><h3 style="margin:0;font-size:12.5px;font-weight:700;color:#1e293b">ĐỘ PHỦ HỒ SƠ TUÂN THỦ</h3></div><div style="flex:1;min-height:0;padding:10px 14px;display:flex;flex-direction:column;justify-content:space-between">
         <div style="display:flex;flex-direction:column;gap:6px">
@@ -189,8 +229,8 @@ let dashboardElement='pb';
         </div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding-top:6px;border-top:1px solid #f1f5f9">
           <div style="background:#ecfdf5;border:1px solid #d1fae5;border-radius:5px;padding:5px 8px;text-align:center"><div style="font-size:9.5px;font-weight:600;color:#065f46">ĐẠT CHUẨN</div><b style="font-size:13px;color:#059669">${d.compliant_materials} NVL</b></div>
-          <div style="background:#fffbeb;border:1px solid #fef3c7;border-radius:5px;padding:5px 8px;text-align:center"><div style="font-size:9.5px;font-weight:600;color:#92400e">CẦN BỔ SUNG</div><b style="font-size:13px;color:#d97706">${coverage.total_materials - d.compliant_materials} NVL</b></div>
-          <div style="background:#fef2f2;border:1px solid #fee2e2;border-radius:5px;padding:5px 8px;text-align:center"><div style="font-size:9.5px;font-weight:600;color:#991b1b">RỦI RO / NG</div><b style="font-size:13px;color:#dc2626">0 NVL</b></div>
+          <div style="background:#fffbeb;border:1px solid #fef3c7;border-radius:5px;padding:5px 8px;text-align:center"><div style="font-size:9.5px;font-weight:600;color:#92400e">CẦN BỔ SUNG</div><b style="font-size:13px;color:#d97706">${d.pending_materials ?? (coverage.total_materials - d.compliant_materials)} NVL</b></div>
+          <div style="background:#fef2f2;border:1px solid #fee2e2;border-radius:5px;padding:5px 8px;text-align:center"><div style="font-size:9.5px;font-weight:600;color:#991b1b">RỦI RO / NG</div><b style="font-size:13px;color:#dc2626">${d.ng_materials ?? 0} NVL</b></div>
         </div>
         <div style="font-size:9.5px;color:#94a3b8;display:flex;justify-content:space-between;align-items:center;padding-top:2px"><span>Đồng bộ tự động theo ${coverage.total_materials} NVL trong BOM</span><span style="color:#059669;font-weight:600">Audit Ready ✓</span></div>
       </div></section>
@@ -199,54 +239,104 @@ let dashboardElement='pb';
     return `<div class="quality-dashboard">${tier1}${tier2}${tier3}</div>`;
   }
   
-  function dashboardTrend(title,data,stage='IQC'){
-    const months={};
-    const now=new Date();
-    for(let i=5;i>=0;i--){
-      const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-      const m=d.toISOString().slice(0,7);
-      months[m]={maximum:0,total:0,count:0};
-    }
-    for(const item of data.items){
-      if(months[item.month]) {
-        const m=months[item.month];
-        m.maximum=Math.max(m.maximum,item.maximum);m.total+=item.average*item.count;m.count+=item.count;
-      }
-    }
-    const entries=Object.entries(months).sort(([a],[b])=>a.localeCompare(b));
-    const max=Math.max(1,...entries.map(([,v])=>v.maximum));
-    const totalSamples=entries.reduce((a,[,v])=>a+v.count,0);
-    const totalSum=entries.reduce((a,[,v])=>a+v.total,0);
-    const avgVal=totalSamples?(totalSum/totalSamples).toFixed(1):'0.0';
-    const barGradient = stage==='IQC' ? 'linear-gradient(180deg, #3b82f6 0%, #1d4ed8 100%)' : 'linear-gradient(180deg, #10b981 0%, #047857 100%)';
-    const badgeBg = stage==='IQC' ? '#eff6ff' : '#ecfdf5';
-    const badgeText = stage==='IQC' ? '#1d4ed8' : '#047857';
+function dashboardTrend(title,data,stage='IQC',controlLimit=null){
+  const months={},now=new Date();
+  for(let i=5;i>=0;i--){const d=new Date(now.getFullYear(),now.getMonth()-i,1);months[`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`]={maximum:0,total:0,count:0};}
+  for(const r of data.items){const m=months[r.month];if(m){m.maximum=Math.max(m.maximum,r.maximum);m.total+=r.average*r.count;m.count+=r.count;}}
+  const hasLimit=controlLimit!==null&&Number.isFinite(Number(controlLimit)),limit=Number(controlLimit);
+  const peak=Math.max(0,...Object.values(months).map(m=>m.maximum));
+  const raw=Math.max(1,peak,hasLimit?limit:0)*1.18/4,power=10**Math.floor(Math.log10(raw)),step=([1,2,2.5,5,10].find(n=>n*power>=raw)||10)*power,scale=step*4;
+  const y=v=>145-120*(v/scale);
+  const entries=Object.entries(months);
+  const count=entries.reduce((n,[,m])=>n+m.count,0),average=count?entries.reduce((n,[,m])=>n+m.total,0)/count:0;
+  const primaryColor=stage==='IQC'?'#2563eb':'#059669';
+  const gradStart=stage==='IQC'?'#3b82f6':'#10b981';
+  const gradEnd=stage==='IQC'?'#1d4ed8':'#047857';
+  const bgTrack=stage==='IQC'?'#eff6ff':'#ecfdf5';
+  const fmt=v=>Number(v.toFixed(2));
+  const over=hasLimit&&peak>limit;
+  const barW=36;
+  const limitY=hasLimit?y(limit):null;
+  const gradientId='xrf-bar-grad-'+stage;
 
-    return `<div class="quality-trend" style="flex:1;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;display:flex;flex-direction:column;justify-content:space-between;min-height:0;height:100%">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-        <h4 style="margin:0;font-size:11.5px;font-weight:700;color:#1e293b">${title} - ${dashboardElement.toUpperCase()} (ppm)</h4>
-        <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:12px;background:${badgeBg};color:${badgeText}">${stage} · 6 tháng</span>
+  return `<div class="xrf-control-chart xrf-polished" style="--chart-color:${primaryColor}">
+    <div class="xrf-chart-title">
+      <b><span class="xrf-series-dot"></span>${esc(title)}</b>
+      <small>${dashboardElement.toUpperCase()} · ppm</small>
+    </div>
+    <div class="xrf-chart-summary">
+      <div>
+        <strong>${count?fmt(peak):'—'}</strong>
+        <span>ppm <small>Đỉnh 6 tháng</small></span>
       </div>
-      <div class="quality-chart" style="display:flex;align-items:flex-end;flex:1;min-height:0;gap:8px;padding:4px 0">
-        ${entries.map(([month,v])=>{
-          const pct = max > 0 && v.count ? Math.max(8, Math.round(100 * v.maximum / max)) : 0;
-          return `<div class="quality-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end;gap:3px;min-height:0">
-            <span style="font-size:9.5px;font-weight:700;color:${v.count?'#1e293b':'#94a3b8'}">${v.count?Number(v.maximum.toFixed(1)):'—'}</span>
-            <div style="width:26px;background:#e2e8f0;flex:1;min-height:30px;border-radius:4px 4px 0 0;position:relative;overflow:hidden">
-              <div style="position:absolute;bottom:0;width:100%;height:${pct}%;background:${barGradient};border-radius:3px 3px 0 0;transition:height 0.3s" title="${month}: Max ${v.maximum} ppm; TB ${v.count?(v.total/v.count).toFixed(1):0} ppm; ${v.count} mẫu"></div>
-            </div>
-            <span style="font-size:9.5px;font-weight:500;color:#64748b;margin-top:2px">${month.slice(5)}</span>
-          </div>`;
-        }).join('')}
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;background:#fff;border-radius:4px;border:1px solid #e2e8f0;font-size:10px;color:#475569;flex-shrink:0">
-        <span>Tổng mẫu: <b style="color:#0f172a">${totalSamples}</b></span>
-        <span>Đỉnh: <b style="color:#0f172a">${max.toFixed(1)} ppm</b></span>
-        <span>TB: <b style="color:#0f172a">${avgVal} ppm</b></span>
-        <span>Kiểm soát: <b style="color:#059669">≤ 100 ppm</b></span>
-      </div>
-    </div>`;
-  }
+      <span class="xrf-sample-pill">${count} mẫu</span>
+    </div>
+    <svg viewBox="0 0 600 182" role="img" aria-label="${esc(title)}: ${esc(dashboardMaterialType)}" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${gradStart}"/>
+          <stop offset="100%" stop-color="${gradEnd}"/>
+        </linearGradient>
+        <linearGradient id="${gradientId}-danger" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f87171"/>
+          <stop offset="100%" stop-color="#dc2626"/>
+        </linearGradient>
+      </defs>
+
+      ${[0,1,2,3,4].map(i=>`<line x1="42" x2="580" y1="${y(step*i)}" y2="${y(step*i)}" stroke="#eef2f7" ${i?'stroke-dasharray="3 5"':''}/><text x="32" y="${y(step*i)+3}" text-anchor="end" font-size="10" fill="#9aa9bb">${fmt(step*i)}</text>`).join('')}
+
+      ${entries.map(([month,m],i)=>{
+        const cx=55+i*101;
+        const bx=cx-barW/2;
+        const val=m.maximum;
+        const barH=m.count && val>0 ? Math.max(6, 145 - y(val)) : 0;
+        const barY=145-barH;
+        const isOver=hasLimit && val>limit;
+        const barFill=isOver ? `url(#${gradientId}-danger)` : `url(#${gradientId})`;
+        const tx=Math.max(43,Math.min(410,cx-85));
+        const ty=barY>80?barY-72:barY+14;
+
+        return `
+        <!-- Background Track -->
+        <rect x="${bx}" y="25" width="${barW}" height="120" rx="6" fill="${bgTrack}" opacity="0.45"/>
+
+        <!-- Active Data Bar -->
+        ${m.count && barH>0 ? `<rect class="xrf-bar-rect" x="${bx}" y="${barY}" width="${barW}" height="${barH}" rx="5" fill="${barFill}"/>` : ''}
+
+        <!-- Top Value Label -->
+        <text x="${cx}" y="${m.count && barH>0 ? Math.max(20, barY-5) : 138}" text-anchor="middle" font-size="${m.count?'10.5':'9.5'}" font-weight="${m.count?'600':'400'}" fill="${m.count?(isOver?'#dc2626':'#1e293b'):'#cbd5e1'}">${m.count?fmt(val):'—'}</text>
+
+        <!-- X Axis Label -->
+        <text x="${cx}" y="168" text-anchor="middle" font-size="10.5" font-weight="500" fill="#64748b">${Number(month.slice(5))}/${month.slice(2,4)}</text>
+
+        <!-- Tooltip on Hover -->
+        ${m.count ? `<g class="xrf-interactive-point" tabindex="0">
+          <rect x="${bx-4}" y="20" width="${barW+8}" height="130" fill="transparent" style="cursor:pointer"/>
+          <g class="xrf-point-tooltip" transform="translate(${tx},${ty})" pointer-events="none">
+            <rect width="170" height="62" rx="8" fill="#1e293b" opacity="0.96" filter="drop-shadow(0 4px 6px rgba(0,0,0,0.15))"/>
+            <text x="12" y="18" fill="#94a3b8" font-size="10.5">${month} · ${m.count} mẫu</text>
+            <text x="12" y="36" fill="#ffffff" font-size="12" font-weight="700">Max: ${fmt(val)} ppm</text>
+            <text x="12" y="52" fill="#cbd5e1" font-size="10.5">Trung bình: ${fmt(m.total/m.count)} ppm</text>
+          </g>
+        </g>` : ''}
+        `;
+      }).join('')}
+
+      <!-- Control Limit Red Dashed Line -->
+      ${hasLimit ? `
+        <line class="xrf-control-line" x1="42" x2="580" y1="${limitY}" y2="${limitY}" stroke="#dc2626" stroke-width="1.8" stroke-dasharray="6 4"/>
+        <rect x="428" y="${limitY-20}" width="152" height="18" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="0.8"/>
+        <text x="504" y="${limitY-7}" text-anchor="middle" fill="#b91c1c" font-size="10" font-weight="700">Control Limit · ${fmt(limit)} ppm</text>
+      ` : ''}
+
+      ${!count?'<text x="310" y="85" text-anchor="middle" font-size="12" font-weight="500" fill="#94a3b8">Chưa có số đo trong giai đoạn này</text>':''}
+    </svg>
+    <div class="xrf-chart-footer">
+      <span>Trung bình <b>${count?fmt(average):'—'} ppm</b></span>
+      <span class="${over?'xrf-over-limit':''}">${!hasLimit?'Chưa có giới hạn kiểm soát':over?'⚠️ Có giá trị vượt giới hạn':'✓ Nằm trong kiểm soát'}</span>
+    </div>
+  </div>`;
+}
 async function dashboardReportList(validity='',days=null,page=1){
   const query=new URLSearchParams({validity,method:'Lab / Bên thứ ba',page,size:15});
   if(days!==null)query.set('expiry_days',days);
@@ -259,8 +349,10 @@ async function dashboardReportList(validity='',days=null,page=1){
 
 async function listPage(module){
   if(module==='bom') {
-    const query=new URLSearchParams({...listState,size:1000});
-    const result=await api('/records?module=bom&'+query);
+    const params = {module: 'bom', size: 1000};
+    if(listState.q) params.q = listState.q;
+    const query = new URLSearchParams(params);
+    const result=await api('/records?'+query);
     const materials=await api('/records?module=materials&size=1000');
     const matMap = {};
     materials.items.forEach(m => matMap[m.data.material_code] = m);
@@ -279,17 +371,18 @@ async function listPage(module){
     window.psBomProjects = projects;
     const projectKeys = Object.keys(projects);
     const bomPage = listState.page || 1;
-    const bomPageSize = Number(listState.size) || 15;
+    const bomPageSize = Number(listState.size) || getOptimalPageSize();
     const pageKeys = projectKeys.slice((bomPage - 1) * bomPageSize, bomPage * bomPageSize);
     const pagination = paginationHtml(bomPage, projectKeys.length, bomPageSize);
+    const bomOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${bomPageSize===v?'selected':''}>${v===2000?`Tất cả (${projectKeys.length} dự án)`:`${v} / trang`}</option>`).join('');
     
-    return head('BOM / Sản phẩm','')+`<section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${bomPageSize===15?'selected':''}>15 / trang</option><option value="25" ${bomPageSize===25?'selected':''}>25 / trang</option><option value="50" ${bomPageSize===50?'selected':''}>50 / trang</option></select></label></div><div class="table-scroll"><table><thead><tr><th>Project</th><th>Product (Mã thành phẩm)</th><th>Số NVL</th><th>Hành động</th></tr></thead><tbody>${pageKeys.map(k=>{
+    return head('Quản lý & Cập nhật BOM','')+`<section class="card fill-card"><div class="toolbar"><select id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${bomOptHtml}</select><div class="toolbar-actions-right"><button type="button" class="toolbar-btn primary" id="import-bom-btn" title="Cập nhật BOM từ Excel" aria-label="Cập nhật BOM từ Excel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button><button type="button" class="toolbar-btn" id="save-bom-btn" title="Lưu dữ liệu / Xuất file BOM ra Excel" aria-label="Lưu dữ liệu BOM"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button><button type="button" class="toolbar-btn danger" id="delete-bom-btn" title="Xóa toàn bộ dữ liệu BOM" aria-label="Xóa toàn bộ dữ liệu BOM"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button></div></div><div class="table-scroll"><table><thead><tr><th>Project</th><th>Product (Mã thành phẩm)</th><th>Số NVL</th><th>Hành động</th></tr></thead><tbody>${pageKeys.map(k=>{
       const p = projects[k];
-      return `<tr><td>${esc(p.project)}</td><td>${esc(p.product)}</td><td>${p.items.length}</td><td><button class="link-button" data-route="product-bom/${encodeURIComponent(k)}">Xem danh sách NVL</button></td></tr>`;
+      return `<tr><td>${esc(p.project)}</td><td>${esc(p.product)}</td><td>${p.items.length}</td><td><div style="display:flex;align-items:center;gap:12px"><button class="link-button" data-route="product-bom/${encodeURIComponent(k)}">Xem danh sách NVL</button><button type="button" class="link-button delete-project-btn" data-project="${esc(p.project)}" title="Xóa BOM dự án ${esc(p.project)}" style="color:#ef4444;font-size:12px;background:none;border:none;cursor:pointer;padding:0">🗑️ Xóa</button></div></td></tr>`;
     }).join('')}</tbody></table></div>${pagination}</section>`;
   }
   const config=catalog.modules[module];
-  const pageSize=Number(listState.size)||15;
+  const pageSize=Number(listState.size)||getOptimalPageSize();
   const query=new URLSearchParams({module,...listState,size:pageSize});
   const result=await api('/records?'+query);
   const keys=columnPreferences[module]||config.fields.slice(0,5).map(f=>f.key);
@@ -297,7 +390,10 @@ async function listPage(module){
   const pagination=paginationHtml(result.page,result.total,pageSize);
   const hasDri = config.fields.some(f=>f.key==='dri');
   const hasStatus = config.fields.some(f=>f.key==='status') || result.items.some(r=>r.display_status);
-  return head(config.title,'')+`<section class="card"><form class="toolbar" id="filters"><input type="search" name="q" placeholder="Tìm mã, tên, nhà cung cấp, CAS…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasStatus ? `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${config.fields.some(f=>f.type==='date') ? `<label>Từ<input type="date" name="start" value="${esc(listState.start)}"></label><label>Đến<input type="date" name="end" value="${esc(listState.end)}"></label>` : ''}<label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select name="size" id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${pageSize===15?'selected':''}>15 / trang</option><option value="25" ${pageSize===25?'selected':''}>25 / trang</option><option value="50" ${pageSize===50?'selected':''}>50 / trang</option></select></label><button type="submit">Áp dụng</button><button type="button" id="reset-filter">Xóa lọc</button><div style="margin-left:auto; display:flex; gap:10px;"><button type="button" id="export">↓ Xuất Excel</button>${can(module,'Create')?'<button type="button" class="primary" id="add-record">+ Thêm hồ sơ</button>':''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
+  const hasProject = module === 'materials';
+  const hasDate = module !== 'materials' && config.fields.some(f=>f.type==='date');
+  const sizeOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${result.total} mục)`:`${v} / trang`}</option>`).join('');
+  return head(config.title,'')+`<section class="card fill-card"><form class="toolbar" id="filters"><input type="search" name="q" placeholder="Tìm mã, tên, NCC, CAS…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasProject ? `<select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án"><option value="">Tất cả dự án</option><option value="Co-mold" ${listState.project==='Co-mold'?'selected':''}>Co-molded / Co-mold</option><option value="SE Jump" ${listState.project==='SE Jump'?'selected':''}>SE Jump</option><option value="CALDERA" ${listState.project==='CALDERA'?'selected':''}>CALDERA, SIERRA 8</option></select><select name="category" id="category-filter" title="Lọc theo Category" aria-label="Category"><option value="">Tất cả Category</option><option value="Raw material" ${listState.category==='Raw material'?'selected':''}>Raw material</option><option value="Packing material" ${listState.category==='Packing material'?'selected':''}>Packing material</option></select>` : ''}${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${hasDate ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
 }
 
 
@@ -378,7 +474,7 @@ async function importsPage(){const data=await api('/imports');return head('Ngu�
 async function trendPage(element='pb',stage=''){const data=await api('/xrf-trend?element='+element+'&stage='+encodeURIComponent(stage));window.psTrend=data;const byMonth={};for(const i of data.items)byMonth[i.month]=Math.max(byMonth[i.month]||0,i.maximum);const max=Math.max(1,...Object.values(byMonth));return head('Xu hướng XRF & thực hiện kế hoạch','')+`<section class="card"><div class="card-header"><h3>Giá trị lớn nhất theo tháng · ppm</h3><select id="trend-element" aria-label="Chất phân tích">${['pb','cd','hg','cr','br','cl'].map(e=>`<option value="${e}" ${element===e?'selected':''}>${e.toUpperCase()}</option>`).join('')}</select></div><div class="card-body"><div class="trend-bars">${Object.entries(byMonth).map(([m,v])=>`<div class="trend-bar"><b>${v.toFixed(1)}</b><i style="height:${Math.max(1,150*v/max)}px"></i><span>${m}</span></div>`).join('')||'<p>Chưa có số đo.</p>'}</div><p class="muted" style="margin-top:18px"><small>${esc(data.basis)}</small></p></div></section><section class="card"><div class="card-header"><h3>Chi tiết theo vật liệu</h3></div><div class="table-scroll"><table><thead><tr><th>Tháng</th><th>Mã vật liệu</th><th>Số mẫu</th><th>Max ppm</th><th>Average ppm</th></tr></thead><tbody>${data.items.map(i=>`<tr><td>${i.month}</td><td>${esc(i.material_code)}</td><td>${i.count}</td><td>${i.maximum}</td><td>${i.average}</td></tr>`).join('')}</tbody></table></div></section><section class="card"><div class="card-header"><h3>Kế hoạch so với kết quả thực hiện</h3><select id="coverage-filter" aria-label="Lọc thực hiện"><option value="">Tất cả</option><option>Overdue</option><option>Pending</option><option>Completed</option><option>Scheduled</option></select></div><div class="table-scroll" id="coverage-table">${coverageTable(data.coverage)}</div></section>`;}
 function coverageTable(rows){return `<table><thead><tr><th>Tháng</th><th>Vật liệu</th><th>Test</th><th>Kết quả đã ghi nhận</th><th>Trạng thái</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${r.month}</td><td><button class="link-button" data-open="${r.plan_id}">${esc(r.material_code)}</button></td><td>${esc(r.test)}</td><td>${r.tests}</td><td>${badge(r.status)}</td></tr>`).join('')}</tbody></table>`;}
 
-async function usersPage(){if(user.role!=='Admin')return head('Quản lý người dùng')+empty('Chỉ Admin được quản lý tài khoản','Liên hệ Admin để kích hoạt tài khoản hoặc thay đổi quyền.');const users=await api('/users');const page=listState.page||1;const pageSize=Number(listState.size)||15;const total=users.length;const pagedUsers=users.slice((page-1)*pageSize,page*pageSize);const pagination=paginationHtml(page,total,pageSize);return head('Quản lý người dùng','')+`<section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${pageSize===15?'selected':''}>15 / trang</option><option value="25" ${pageSize===25?'selected':''}>25 / trang</option><option value="50" ${pageSize===50?'selected':''}>50 / trang</option></select></label></div><div class="table-scroll"><table><thead><tr><th>Họ tên</th><th>Mã nhân viên</th><th>Email</th><th>Phòng ban</th><th>Role</th><th>Trạng thái</th><th></th></tr></thead><tbody>${pagedUsers.map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(u.employee_id)}</td><td>${esc(u.email)}</td><td>${esc(u.department)}</td><td><select data-user-role="${u.id}" ${u.id===user.id?'disabled':''}>${catalog.roles.map(r=>`<option ${r===u.role?'selected':''}>${r}</option>`).join('')}</select></td><td><label style="margin:0"><input type="checkbox" data-user-active="${u.id}" ${u.active?'checked':''} ${u.id===user.id?'disabled':''}>Kích hoạt</label></td><td><button data-save-user="${u.id}" ${u.id===user.id?'disabled':''}>Lưu</button></td></tr>`).join('')}</tbody></table></div>${pagination}</section>`;}
+async function usersPage(){if(user.role!=='Admin')return head('Quản lý người dùng')+empty('Chỉ Admin được quản lý tài khoản','Liên hệ Admin để kích hoạt tài khoản hoặc thay đổi quyền.');const users=await api('/users');const page=listState.page||1;const pageSize=Number(listState.size)||getOptimalPageSize();const total=users.length;const pagedUsers=users.slice((page-1)*pageSize,page*pageSize);const pagination=paginationHtml(page,total,pageSize);const userOptHtml=[15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${total} tài khoản)`:`${v} / trang`}</option>`).join('');return head('Quản lý người dùng','')+`<section class="card fill-card"><div class="toolbar"><select id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${userOptHtml}</select></div><div class="table-scroll"><table><thead><tr><th>Họ tên</th><th>Mã nhân viên</th><th>Email</th><th>Phòng ban</th><th>Role</th><th>Trạng thái</th><th></th></tr></thead><tbody>${pagedUsers.map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(u.employee_id)}</td><td>${esc(u.email)}</td><td>${esc(u.department)}</td><td><select data-user-role="${u.id}" ${u.id===user.id?'disabled':''}>${catalog.roles.map(r=>`<option ${r===u.role?'selected':''}>${r}</option>`).join('')}</select></td><td><label style="margin:0"><input type="checkbox" data-user-active="${u.id}" ${u.active?'checked':''} ${u.id===user.id?'disabled':''}>Kích hoạt</label></td><td><button data-save-user="${u.id}" ${u.id===user.id?'disabled':''}>Lưu</button></td></tr>`).join('')}</tbody></table></div>${pagination}</section>`;}
 let roleSettings;
 async function rolesPage(){roleSettings=await api('/settings/permissions');const role=Object.keys(roleSettings)[0];return head('Vai trò & Phân quyền','',user.role==='Admin'?'<button class="primary" id="save-roles">Lưu phân quyền</button>':'')+`<section class="card"><div class="toolbar"><label>Role<select id="role-select">${Object.keys(roleSettings).map(r=>`<option>${r}</option>`).join('')}</select></label><small class="muted">Admin luôn có toàn quyền.</small></div><div id="role-matrix" class="table-scroll">${roleMatrix(role)}</div></section>`;}
 function roleMatrix(role){return `<table><thead><tr><th>Module</th>${['View','Create','Edit','Delete','Upload','Approve','Close'].map(a=>`<th>${a}</th>`).join('')}</tr></thead><tbody>${Object.keys(catalog.modules).map(m=>`<tr><td>${esc(title(m))}</td>${['View','Create','Edit','Delete','Upload','Approve','Close'].map(a=>`<td><input type="checkbox" aria-label="${esc(title(m)+' '+a)}" data-permission="${m}:${a}" ${roleSettings[role]?.[m]?.[a]?'checked':''} ${user.role==='Admin'?'':'disabled'}></td>`).join('')}</tr>`).join('')}</tbody></table>`;}
@@ -393,6 +489,7 @@ if(id==='inspection-plans'){
   if($('#page-size-select')) $('#page-size-select').onchange=e=>{listState.size=Number(e.target.value);listState.page=1;render();};
 }
 if(id==='dashboard'){
+  $('#dashboard-material-type').onchange=e=>{dashboardMaterialType=e.target.value;return render();};
   $('#dashboard-element').onchange=e=>{dashboardElement=e.target.value;return render();};
   content.querySelectorAll('[data-report-validity]').forEach(b=>b.onclick=()=>dashboardReportList(b.dataset.reportValidity).catch(e=>notify(e.message)));
   content.querySelectorAll('[data-report-days]').forEach(b=>b.onclick=()=>dashboardReportList('',Number(b.dataset.reportDays)).catch(e=>notify(e.message)));
@@ -404,7 +501,13 @@ if(catalog.modules[id] || id==='bom' || id==='xrf'){
   const module = $('#filters')?.dataset?.module || $('#export')?.dataset?.module || id;
   if($('#filters')) $('#filters').onsubmit=e=>{e.preventDefault();Object.assign(listState,Object.fromEntries(new FormData(e.target)),{page:1});render();};
   if($('#page-size-select')) $('#page-size-select').onchange=e=>{listState.size=Number(e.target.value);listState.page=1;render();};
-  if($('#reset-filter')) $('#reset-filter').onclick=()=>{listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||15};render();};
+  if($('#reset-filter')) $('#reset-filter').onclick=()=>{listState={page:1,q:'',status:'',project:'',category:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||getOptimalPageSize()};render();};
+  if($('#project-filter')) $('#project-filter').onchange=()=>{listState.project=$('#project-filter').value;listState.page=1;render();};
+  if($('#category-filter')) $('#category-filter').onchange=()=>{listState.category=$('#category-filter').value;listState.page=1;render();};
+  if($('#import-bom-btn')) $('#import-bom-btn').onclick=()=>confirmAction('Cập nhật dữ liệu BOM từ file Material report for SE-CM project.xlsx?',async()=>{try{const res=await api('/bom/import',{method:'POST'});notify(`Đã cập nhật BOM: +${res.bom_added} BOM, +${res.materials_added} NVL.`);render();}catch(err){notify(err.message);}});
+  if($('#save-bom-btn')) $('#save-bom-btn').onclick=async()=>{try{try{await api('/bom/save',{method:'POST'});}catch(e){}notify('Đã lưu và xuất dữ liệu BOM thành công.');location.href='/api/export/bom';}catch(err){notify(err.message);}};
+  if($('#delete-bom-btn')) $('#delete-bom-btn').onclick=()=>confirmAction('Bạn có chắc chắn muốn xóa TOÀN BỘ dữ liệu BOM? Danh mục NVL liên quan sẽ được tự động cập nhật theo.',async()=>{try{try{const res=await api('/bom',{method:'DELETE'});notify(`Đã xóa ${res.count} bản ghi BOM và cập nhật ${res.materials_count||0} NVL trong Danh mục.`);}catch(e){const allBom=await api('/records?module=bom&size=2000');const bomCodes=new Set(allBom.items.map(r=>r.data.material_code).filter(Boolean));for(const r of allBom.items){await api('/records/'+r.id+'?version='+r.version,{method:'DELETE'});}const allMats=await api('/records?module=materials&size=2000');let mCount=0;for(const m of allMats.items){if(bomCodes.has(m.data.material_code)){await api('/records/'+m.id+'?version='+m.version,{method:'DELETE'});mCount++;}}notify(`Đã xóa ${allBom.items.length} bản ghi BOM và đồng bộ ${mCount} NVL.`);}render();}catch(err){notify(err.message);}});
+  content.querySelectorAll('.delete-project-btn').forEach(b=>b.onclick=()=>{const proj=b.dataset.project;confirmAction(`Xóa toàn bộ dữ liệu BOM của dự án "${proj}"? Danh mục NVL của dự án sẽ được tự động cập nhật theo.`,async()=>{try{try{const res=await api('/bom?project='+encodeURIComponent(proj),{method:'DELETE'});notify(`Đã xóa ${res.count} BOM dự án "${proj}" và cập nhật ${res.materials_count||0} NVL.`);}catch(e){const allBom=await api('/records?module=bom&size=2000');const projBom=allBom.items.filter(r=>r.data.project===proj||r.data.parent_code===proj);const projCodes=new Set(projBom.map(r=>r.data.material_code).filter(Boolean));const otherCodes=new Set(allBom.items.filter(r=>r.data.project!==proj&&r.data.parent_code!==proj).map(r=>r.data.material_code).filter(Boolean));for(const r of projBom){await api('/records/'+r.id+'?version='+r.version,{method:'DELETE'});}const allMats=await api('/records?module=materials&size=2000');let mCount=0;for(const m of allMats.items){if(m.data.project===proj||(projCodes.has(m.data.material_code)&&!otherCodes.has(m.data.material_code))){await api('/records/'+m.id+'?version='+m.version,{method:'DELETE'});mCount++;}}notify(`Đã xóa ${projBom.length} BOM dự án "${proj}" và cập nhật ${mCount} NVL.`);}render();}catch(err){notify(err.message);}});});
   if($('#prev-page')) $('#prev-page').onclick=()=>{if(listState.page>1){listState.page--;render();}};
   if($('#next-page')) $('#next-page').onclick=()=>{listState.page=(listState.page||1)+1;render();};
   content.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{listState.page=Number(b.dataset.page);render();});
@@ -417,6 +520,8 @@ if(id==='product-bom'){
   if($('#bom-prev')) $('#bom-prev').onclick=()=>{if(window.psBomMatPage>1){window.psBomMatPage--;render();}};
   if($('#bom-next')) $('#bom-next').onclick=()=>{window.psBomMatPage=(window.psBomMatPage||1)+1;render();};
   if($('#bom-size-select')) $('#bom-size-select').onchange=e=>{listState.size=Number(e.target.value);window.psBomMatPage=1;render();};
+  if($('#save-proj-bom-btn')) $('#save-proj-bom-btn').onclick=async()=>{try{try{await api('/bom/save',{method:'POST'});}catch(e){}notify('Đã lưu dữ liệu BOM.');location.href='/api/export/bom';}catch(err){notify(err.message);}};
+  if($('#delete-proj-bom-btn')) $('#delete-proj-bom-btn').onclick=()=>{const proj=$('#delete-proj-bom-btn').dataset.project;confirmAction(`Xóa toàn bộ dữ liệu BOM của dự án "${proj}"? Danh mục NVL của dự án sẽ được tự động cập nhật theo.`,async()=>{try{try{const res=await api('/bom?project='+encodeURIComponent(proj),{method:'DELETE'});notify(`Đã xóa ${res.count} bản ghi BOM dự án "${proj}" và cập nhật ${res.materials_count||0} NVL.`);}catch(e){const allBom=await api('/records?module=bom&size=2000');const projBom=allBom.items.filter(r=>r.data.project===proj||r.data.parent_code===proj);const projCodes=new Set(projBom.map(r=>r.data.material_code).filter(Boolean));const otherCodes=new Set(allBom.items.filter(r=>r.data.project!==proj&&r.data.parent_code!==proj).map(r=>r.data.material_code).filter(Boolean));for(const r of projBom){await api('/records/'+r.id+'?version='+r.version,{method:'DELETE'});}const allMats=await api('/records?module=materials&size=2000');let mCount=0;for(const m of allMats.items){if(m.data.project===proj||(projCodes.has(m.data.material_code)&&!otherCodes.has(m.data.material_code))){await api('/records/'+m.id+'?version='+m.version,{method:'DELETE'});mCount++;}}notify(`Đã xóa ${projBom.length} bản ghi BOM dự án "${proj}" và cập nhật ${mCount} NVL.`);}goto('bom');}catch(err){notify(err.message);}});};
 }
 if(id==='users'){
   content.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{listState.page=Number(b.dataset.page);render();});
@@ -430,12 +535,20 @@ if(id==='xrf-trend'){$('#trend-element').onchange=async e=>{try{content.innerHTM
 if(id==='users')document.querySelectorAll('[data-save-user]').forEach(b=>b.onclick=()=>{const uid=b.dataset.saveUser;const role=document.querySelector(`[data-user-role="${uid}"]`).value;const active=document.querySelector(`[data-user-active="${uid}"]`).checked;confirmAction('Lưu trạng thái và quyền truy cập tài khoản này?',async()=>{await api('/users/'+uid,{method:'PUT',body:JSON.stringify({role,active})});notify('Đã cập nhật tài khoản.');render();});});
 if(id==='roles'){const bindMatrix=()=>document.querySelectorAll('[data-permission]').forEach(box=>box.onchange=()=>{const role=$('#role-select').value;const [m,a]=box.dataset.permission.split(':');roleSettings[role][m]??={};roleSettings[role][m][a]=box.checked;});$('#role-select').onchange=e=>{$('#role-matrix').innerHTML=roleMatrix(e.target.value);bindMatrix();};bindMatrix();$('#save-roles')?.addEventListener('click',()=>confirmAction('Áp dụng phân quyền mới cho các role?',async()=>{await api('/settings/permissions',{method:'PUT',body:JSON.stringify(roleSettings)});notify('Đã lưu phân quyền.');}));}
 if(['notifications','retention','system'].includes(id))$('#settings-form').onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));if(id==='notifications'){data.days=Number(data.days);for(const k of ['reports','training','capa','documents','compliance'])data[k]=!!e.target.elements[k].checked;}if(id==='retention')for(const k in data)data[k]=Number(data[k]);try{await api('/settings/'+id,{method:'PUT',body:JSON.stringify(data)});notify('Đã lưu cài đặt.');}catch(error){notify(error.message);}};
+if(id==='xrf-standard'){
+  if($('#seed-defaults')) $('#seed-defaults').onclick=()=>confirmAction('Khôi phục giá trị Polymers mặc định? Các giá trị đã có sẽ không bị ghi đè.',async()=>{try{const res=await api('/xrf-limits/seed',{method:'POST'});notify(`Đã tạo ${res.created} giới hạn. Tổng: ${res.total}`);render();}catch(e){notify(e.message);}});
+  if($('#add-material-group')) $('#add-material-group').onclick=()=>{const mt=prompt('Tên nhóm vật liệu mới (VD: Metals/Ceramic/Glass):');if(!mt||!mt.trim())return;const elements=['Cd (Cadmium)','Pb (Lead)','Hg (Mercury)','Cr (Chromium)','Br (Bromine)','Cl (Chlorine)'];confirmAction(`Tạo 6 chất cho nhóm "${mt.trim()}" với giá trị rỗng?`,async()=>{try{for(const el of elements){await api('/records',{method:'POST',body:JSON.stringify({module:'xrf-standard',data:{element:el,material_type:mt.trim(),control_limit:null,spec_limit:null,rule:'≤ Control Limit'}})});}notify('Đã tạo nhóm '+mt.trim());render();}catch(e){notify(e.message);}});};
+  content.querySelectorAll('.save-limit-btn').forEach(b=>b.onclick=async()=>{const tr=b.closest('tr');const id=b.dataset.id;const inputs=tr.querySelectorAll('.xrf-input');const updates={};inputs.forEach(inp=>{const field=inp.dataset.field;const val=inp.type==='number'?(inp.value?Number(inp.value):null):inp.value;updates[field]=val;});try{const current=await api('/records/'+id);const newData={...current.data,...updates};await api('/records/'+id,{method:'PUT',body:JSON.stringify({module:'xrf-standard',data:newData,version:current.version})});notify('Đã lưu giới hạn.');render();}catch(e){notify(e.message);}});
+  content.querySelectorAll('.delete-limit-btn').forEach(b=>b.onclick=()=>confirmAction('Xóa giới hạn này?',async()=>{try{const current=await api('/records/'+b.dataset.id);await api('/records/'+b.dataset.id+'?version='+current.version,{method:'DELETE'});notify('Đã xóa.');render();}catch(e){notify(e.message);}}));
+  content.querySelectorAll('.add-element-btn').forEach(b=>b.onclick=()=>{const el=prompt('Tên chất (VD: Cd (Cadmium)):');if(!el||!el.trim())return;(async()=>{try{await api('/records',{method:'POST',body:JSON.stringify({module:'xrf-standard',data:{element:el.trim(),material_type:b.dataset.mt,control_limit:null,spec_limit:null,rule:'≤ Control Limit'}})});notify('Đã thêm '+el.trim());render();}catch(e){notify(e.message);}})();});
+  content.querySelectorAll('.delete-group-btn').forEach(b=>b.onclick=()=>confirmAction(`Xóa toàn bộ nhóm "${b.dataset.mt}"? Thao tác này không thể hoàn tác.`,async()=>{try{const all=await api('/xrf-limits');const toDelete=all.filter(r=>r.data.material_type===b.dataset.mt);for(const r of toDelete){await api('/records/'+r.id+'?version='+r.version,{method:'DELETE'});}notify(`Đã xóa ${toDelete.length} giới hạn.`);render();}catch(e){notify(e.message);}}));
+}
 }
 
 if($('#quick-add')) $('#quick-add').onclick=()=>{const choices=[['materials','Thêm vật liệu'],['reports','Upload Test Report'],['declarations','Thêm Declaration'],['ncr','Tạo NCR'],['capa','Tạo CAPA'],['documents','Upload Document']].filter(([m])=>can(m,'Create'));openModal('Thêm nhanh',choices.length?`<div class="folder-grid">${choices.map(([m,n])=>`<button data-quick="${m}" class="folder">${n}</button>`).join('')}</div>`:empty('Bạn có quyền chỉ xem','Liên hệ Admin nếu cần tạo hoặc upload hồ sơ.'));modal.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>recordForm(b.dataset.quick));};
-$('#notifications-button').onclick=async()=>{try{overview=await api('/overview');openModal('Thông báo & công việc',rowTable(overview.alerts,['name','module','status']));bindCommon(modal);modal.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{modal.close();goto('record/'+b.dataset.open);});}catch(e){notify(e.message);}};
-$('#profile-button').onclick=()=>{openModal('Tài khoản của bạn',`<p><b>${esc(user.name)}</b><br>${esc(user.email)} · ${esc(user.role)}</p><form id="password-form"><label>Mật khẩu hiện tại<input type="password" name="current_password" required autocomplete="current-password"></label><label>Mật khẩu mới<input type="password" name="new_password" minlength="10" maxlength="128" required autocomplete="new-password"></label><div id="password-error" class="form-error"></div><button class="primary" type="submit">Đổi mật khẩu</button></form>`,`<button id="logout" class="danger">Đăng xuất</button>`);$('#logout').onclick=async()=>{try{await api('/auth/logout',{method:'POST'});location.replace('/login');}catch(e){notify(e.message);}};$('#password-form').onsubmit=async e=>{e.preventDefault();try{await api('/auth/password',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});location.replace('/login');}catch(err){$('#password-error').textContent=err.message;}};};
-let searchTimer,searchSequence=0;$('#global-search').oninput=e=>{clearTimeout(searchTimer);const q=e.target.value;const seq=++searchSequence;if(q.length<2){$('#search-results').hidden=true;return;}searchTimer=setTimeout(async()=>{try{const rows=await api('/search?q='+encodeURIComponent(q));if(seq!==searchSequence)return;$('#search-results').innerHTML=rows.map(r=>`<button class="search-result" data-search-open="${r.id}">${esc(label(r))}<small>${esc(title(r.module))} · ${esc(r.data.material_code||r.data.report_id||'')}</small></button>`).join('')||'<div class="empty">Không tìm thấy kết quả</div>';$('#search-results').hidden=false;document.querySelectorAll('[data-search-open]').forEach(b=>b.onclick=()=>{$('#search-results').hidden=true;goto('record/'+b.dataset.searchOpen);});}catch(e){notify(e.message);}},250);};document.addEventListener('click',e=>{if(!e.target.closest('.global-search'))$('#search-results').hidden=true;});document.addEventListener('keydown',e=>{if(e.key==='Escape')$('#search-results').hidden=true;});
+if($('#notifications-button')) $('#notifications-button').onclick=async()=>{try{overview=await api('/overview');openModal('Thông báo & công việc',rowTable(overview.alerts,['name','module','status']));bindCommon(modal);modal.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{modal.close();goto('record/'+b.dataset.open);});}catch(e){notify(e.message);}};
+if($('#profile-button')) $('#profile-button').onclick=()=>{openModal('Tài khoản của bạn',`<p><b>${esc(user.name)}</b><br>${esc(user.email)} · ${esc(user.role)}</p><form id="password-form"><label>Mật khẩu hiện tại<input type="password" name="current_password" required autocomplete="current-password"></label><label>Mật khẩu mới<input type="password" name="new_password" minlength="10" maxlength="128" required autocomplete="new-password"></label><div id="password-error" class="form-error"></div><button class="primary" type="submit">Đổi mật khẩu</button></form>`,`<button id="logout" class="danger">Đăng xuất</button>`);$('#logout').onclick=async()=>{try{await api('/auth/logout',{method:'POST'});location.replace('/login');}catch(e){notify(e.message);}};$('#password-form').onsubmit=async e=>{e.preventDefault();try{await api('/auth/password',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});location.replace('/login');}catch(err){$('#password-error').textContent=err.message;}};};
+let searchTimer,searchSequence=0;if($('#global-search')) $('#global-search').oninput=e=>{clearTimeout(searchTimer);const q=e.target.value;const seq=++searchSequence;if(q.length<2){$('#search-results').hidden=true;return;}searchTimer=setTimeout(async()=>{try{const rows=await api('/search?q='+encodeURIComponent(q));if(seq!==searchSequence)return;$('#search-results').innerHTML=rows.map(r=>`<button class="search-result" data-search-open="${r.id}">${esc(label(r))}<small>${esc(title(r.module))} · ${esc(r.data.material_code||r.data.report_id||'')}</small></button>`).join('')||'<div class="empty">Không tìm thấy kết quả</div>';$('#search-results').hidden=false;document.querySelectorAll('[data-search-open]').forEach(b=>b.onclick=()=>{$('#search-results').hidden=true;goto('record/'+b.dataset.searchOpen);});}catch(e){notify(e.message);}},250);};document.addEventListener('click',e=>{if(!e.target.closest('.global-search'))if($('#search-results'))$('#search-results').hidden=true;});document.addEventListener('keydown',e=>{if(e.key==='Escape')if($('#search-results'))$('#search-results').hidden=true;});
 
 
 function toggleSidebar(force) {
@@ -489,7 +602,7 @@ async function xrfPage(tab) {
     } else {
         const modMap = {'plan': 'xrf-plan', 'iqc': 'xrf-iqc', 'oqc': 'xrf-oqc', 'change': 'change-control'};
         const module = modMap[tab];
-        const pageSize = Number(listState.size) || 15;
+        const pageSize = Number(listState.size) || getOptimalPageSize();
         const query=new URLSearchParams({module, ...listState, size:pageSize});
         const result=await api('/records?'+query);
         const config=catalog.modules[module];
@@ -498,7 +611,8 @@ async function xrfPage(tab) {
         const pagination = paginationHtml(result.page, result.total, pageSize);
         const hasDri = config.fields.some(f=>f.key==='dri');
         const hasStatus = config.fields.some(f=>f.key==='status') || result.items.some(r=>r.display_status);
-        pageHtml = `<section class="card"><form class="toolbar" id="filters" data-module="${module}"><input type="search" name="q" placeholder="Tìm mã NVL, tên, lô…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasStatus ? `<select name="status" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${config.fields.some(f=>f.type==='date') ? `<label>Từ<input type="date" name="start" value="${esc(listState.start)}"></label><label>Đến<input type="date" name="end" value="${esc(listState.end)}"></label>` : ''}<label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select name="size" id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${pageSize===15?'selected':''}>15 / trang</option><option value="25" ${pageSize===25?'selected':''}>25 / trang</option><option value="50" ${pageSize===50?'selected':''}>50 / trang</option></select></label><button type="submit">Áp dụng</button><button type="button" id="reset-filter">Xóa lọc</button><div style="margin-left:auto; display:flex; gap:10px;"><button type="button" id="export" data-module="${module}">↓ Xuất Excel</button>${can(module,'Create')?`<button type="button" class="primary" id="add-record" data-module="${module}">+ Thêm hồ sơ</button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
+        const xrfOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${result.total} mục)`:`${v} / trang`}</option>`).join('');
+        pageHtml = `<section class="card"><form class="toolbar" id="filters" data-module="${module}"><input type="search" name="q" placeholder="Tìm mã NVL, tên, lô…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${config.fields.some(f=>f.type==='date') ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${xrfOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" data-module="${module}" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" data-module="${module}" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
     }
     
     return head('XRF Monitoring', '') + tabs + pageHtml;
@@ -510,13 +624,14 @@ async function productBomPage(key) {
     if(!p) return empty('Không tìm thấy dữ liệu BOM');
     
     window.psBomMatPage = window.psBomMatPage || 1;
-    const pageSize = Number(listState.size) || 15;
+    const pageSize = Number(listState.size) || getOptimalPageSize();
     const totalItems = p.items.length;
     const currentPage = window.psBomMatPage;
     const paginatedItems = p.items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
     const pagination = paginationHtml(currentPage, totalItems, pageSize, 'data-bom-page', 'bom-prev', 'bom-next');
+    const projOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${totalItems} mục)`:`${v} / trang`}</option>`).join('');
     
-    return head('BOM Dự án: ' + (p.product || p.project), '', '<button data-route="bom">← Trở lại danh sách BOM</button>') + `<section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="bom-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${pageSize===15?'selected':''}>15 / trang</option><option value="25" ${pageSize===25?'selected':''}>25 / trang</option><option value="50" ${pageSize===50?'selected':''}>50 / trang</option></select></label></div><div class="table-scroll"><table><thead><tr><th>Phân loại</th><th>Mã NVL (Material Code)</th><th>Tên vật liệu (Material Name)</th><th>Nhà cung cấp</th><th>Đơn vị</th><th>Định mức (BOM)</th><th>Compliance Status</th><th></th></tr></thead><tbody>${paginatedItems.map(i=>{
+    return head('BOM Dự án: ' + (p.product || p.project), '', '<button data-route="bom">← Trở lại danh sách BOM</button>') + `<section class="card fill-card"><div class="toolbar"><select id="bom-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${projOptHtml}</select><div class="toolbar-actions-right"><button type="button" class="toolbar-btn" id="save-proj-bom-btn" title="Lưu / Xuất dữ liệu BOM ra Excel" aria-label="Lưu dữ liệu BOM"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></button><button type="button" class="toolbar-btn danger" id="delete-proj-bom-btn" data-project="${esc(p.project)}" title="Xóa toàn bộ BOM dự án này" aria-label="Xóa BOM dự án"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button></div></div><div class="table-scroll"><table><thead><tr><th>Phân loại</th><th>Mã NVL (Material Code)</th><th>Tên vật liệu (Material Name)</th><th>Nhà cung cấp</th><th>Đơn vị</th><th>Định mức (BOM)</th><th>Compliance Status</th><th></th></tr></thead><tbody>${paginatedItems.map(i=>{
         const m = i.mat;
         const b = i.bom.data || {};
         const cat = b.category || m?.data?.category || 'Raw material';
@@ -533,10 +648,82 @@ async function productBomPage(key) {
 }
 
 async function planningPage(){
-  const pageSize = Number(listState.size) || 15;
+  const pageSize = Number(listState.size) || getOptimalPageSize();
   const data=await api('/inspections/inspection-plans?size='+pageSize+'&page='+listState.page);
   const pagination = paginationHtml(data.page, data.total, pageSize, 'data-plan-page', 'plan-prev', 'plan-next');
-  return head('Kế hoạch kiểm nghiệm','')+`<div class="tabs">${['test-plan','xrf-plan','cts-1','cts-2','cts-3'].filter(m=>can(m,'View')).map(m=>`<button data-route="${m}">${esc(title(m))}</button>`).join('')}</div><section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff"><option value="15" ${pageSize===15?'selected':''}>15 / trang</option><option value="25" ${pageSize===25?'selected':''}>25 / trang</option><option value="50" ${pageSize===50?'selected':''}>50 / trang</option></select></label></div>${rowTable(data.items,['name','module','status'])}${pagination}</section>`;
+  const planOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${data.total} mục)`:`${v} / trang`}</option>`).join('');
+  return head('Kế hoạch kiểm nghiệm','')+`<div class="tabs">${['test-plan','xrf-plan','cts-1','cts-2','cts-3'].filter(m=>can(m,'View')).map(m=>`<button data-route="${m}">${esc(title(m))}</button>`).join('')}</div><section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff">${planOptHtml}</select></label></div>${rowTable(data.items,['name','module','status'])}${pagination}</section>`;
+}
+
+async function xrfStandardPage(){
+  const data = await api('/xrf-limits');
+  // Group by material_type
+  const groups = {};
+  for(const r of data){
+    const mt = r.data.material_type || 'Không xác định';
+    if(!groups[mt]) groups[mt] = [];
+    groups[mt].push(r);
+  }
+  const elementOrder = ['Cd','Pb','Hg','Cr','Br','Cl'];
+  for(const mt in groups){
+    groups[mt].sort((a,b)=>{
+      const ai = elementOrder.indexOf(a.data.element?.split(' ')[0]||'');
+      const bi = elementOrder.indexOf(b.data.element?.split(' ')[0]||'');
+      return (ai===-1?99:ai) - (bi===-1?99:bi);
+    });
+  }
+  const materialTypes = Object.keys(groups);
+
+  let html = head('XRF – Giới hạn kiểm soát','Quản lý Control Limit & Spec Limit cho máy XRF theo nhóm vật liệu');
+  html += `<section class="card" style="padding:16px">
+    <div class="toolbar" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="primary" id="seed-defaults" style="font-size:12px">🔄 Khôi phục Polymers mặc định</button>
+      <button id="add-material-group" style="font-size:12px">➕ Thêm nhóm vật liệu</button>
+    </div>`;
+
+  if(materialTypes.length === 0){
+    html += `<div style="text-align:center;padding:40px;color:#64748b">
+      <p style="font-size:14px;font-weight:600">Chưa có giới hạn kiểm soát nào</p>
+      <p style="font-size:12px">Nhấn "Khôi phục Polymers mặc định" để tạo bộ giá trị chuẩn.</p>
+    </div>`;
+  }
+
+  for(const mt of materialTypes){
+    const rows = groups[mt];
+    html += `<div class="xrf-group" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="margin:0;font-size:13px;font-weight:700;color:#1e293b">📋 ${esc(mt)}</h3>
+        <div style="display:flex;gap:6px">
+          <button class="add-element-btn" data-mt="${esc(mt)}" style="font-size:11px;padding:4px 10px">➕ Thêm chất</button>
+          <button class="delete-group-btn danger" data-mt="${esc(mt)}" style="font-size:11px;padding:4px 10px">🗑 Xóa nhóm</button>
+        </div>
+      </div>
+      <div class="table-scroll"><table>
+        <thead><tr>
+          <th style="width:200px">Chất</th>
+          <th style="width:150px">Control Limit (ppm)</th>
+          <th style="width:150px">Spec Limit (ppm)</th>
+          <th>Quy tắc</th>
+          <th style="width:120px">Hành động</th>
+        </tr></thead>
+        <tbody>`;
+    for(const r of rows){
+      const d = r.data;
+      html += `<tr data-id="${r.id}">
+        <td><b>${esc(d.element||'')}</b></td>
+        <td><input type="number" class="xrf-input" data-field="control_limit" value="${d.control_limit??''}" style="width:100px;padding:4px 8px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px"></td>
+        <td><input type="number" class="xrf-input" data-field="spec_limit" value="${d.spec_limit??''}" style="width:100px;padding:4px 8px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px"></td>
+        <td><input type="text" class="xrf-input" data-field="rule" value="${esc(d.rule||'')}" style="width:100%;padding:4px 8px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px"></td>
+        <td style="display:flex;gap:4px">
+          <button class="save-limit-btn primary" data-id="${r.id}" style="font-size:11px;padding:4px 8px">💾 Lưu</button>
+          <button class="delete-limit-btn danger" data-id="${r.id}" style="font-size:11px;padding:4px 8px">🗑</button>
+        </td>
+      </tr>`;
+    }
+    html += `</tbody></table></div></div>`;
+  }
+  html += `</section>`;
+  return html;
 }
 
 async function render() {
@@ -545,13 +732,13 @@ async function render() {
   const [route,parameter]=path.split('/');
   if(currentModule!==route){
     currentModule=route;
-    listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc'};
+    listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||getOptimalPageSize()};
   }
   content.classList.toggle('quality-dashboard-page',route==='dashboard');
   if($('#topbar-updated'))$('#topbar-updated').hidden=true;
   nav(route==='group'?'group/'+parameter:route);
   content.innerHTML='<div class="loading">Đang tải dữ liệu…</div>';
-  let pageTitle=route==='dashboard'?'Tổng quan Product Safety':title(route);
+  let pageTitle=route==='dashboard'?'Product Safety Dashboard':title(route);
   try {
     let html;
     if(route==='xrf') {
@@ -583,13 +770,23 @@ async function render() {
     else if(route==='xrf-trend')html=await trendPage(dashboardElement,parameter||'');
     else if(route==='imports')html=await importsPage();
     else if(route==='inspection-plans')html=await planningPage();
+    else if(route==='xrf-standard')html=await xrfStandardPage();
     else if(catalog.modules[route])html=await listPage(route);
     else html=empty('Không tìm thấy trang','Đường dẫn không hợp lệ. Chọn một mục trong menu.');
     if(ticket!==requestId)return;
     content.innerHTML=html;
     const heading=document.getElementById('topbar-title');
     if(heading)heading.textContent=pageTitle;
-    if(route==='dashboard'&&$('#topbar-updated')){$('#topbar-updated').textContent='Cập nhật lần cuối: '+(overview.updated_at?dateText(overview.updated_at):'Chưa có dữ liệu');$('#topbar-updated').hidden=false;}
+    if(route==='dashboard'&&$('#topbar-updated')){
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      $('#topbar-updated').innerHTML = `<span style="color:#059669;font-weight:600">● Trực tiếp</span> · Cập nhật lúc ${timeStr} <button id="dashboard-refresh-btn" type="button" title="Làm mới dữ liệu Dashboard" style="margin-left:6px;padding:1px 6px;font-size:11px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;cursor:pointer;color:#334155;font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,0.04)">🔄 Làm mới</button>`;
+      $('#topbar-updated').hidden = false;
+      $('#dashboard-refresh-btn')?.addEventListener('click', () => {
+        notify('Đang đồng bộ và làm mới dữ liệu Dashboard…');
+        render();
+      });
+    }
     if(route==='xrf-trend'&&parameter)$('#topbar-title').textContent=parameter+' Trend';
     bindPage(route);
   } catch(error) {
@@ -599,6 +796,31 @@ async function render() {
   }
 }
 
-const collapseBtn = document.getElementById('collapse'); if(collapseBtn) collapseBtn.onclick = () => toggleSidebar();
-window.addEventListener('hashchange',render);
-try{const auth=await api('/auth/me');user=auth.user;csrf=auth.csrf;catalog=await api('/catalog');$('#profile-name').textContent=user.name;$('#profile-role').textContent=user.role;$('#avatar').textContent=user.name.split(' ').map(p=>p[0]).slice(-2).join('').toUpperCase();toggleSidebar(localStorage.getItem('ps_sidebar_collapsed')==='true'||innerWidth<760);await render();}catch(error){content.innerHTML=`<div class="alert error">${esc(error.message)}</div>`;}
+const collapseBtn = document.getElementById('collapse');
+if(collapseBtn) collapseBtn.onclick = () => toggleSidebar();
+window.addEventListener('hashchange', render);
+
+(async function init() {
+  try {
+    const auth = await api('/auth/me');
+    user = auth.user;
+    csrf = auth.csrf;
+    loginAt = auth.login_at;
+    catalog = await api('/catalog');
+    const pn = $('#profile-name'); if(pn) pn.textContent = user.name || '';
+    const pr = $('#profile-role'); if(pr) pr.textContent = user.role || '';
+    const av = $('#avatar');
+    if(av) {
+      const parts = (user.name || 'Admin').trim().split(/\s+/);
+      av.textContent = parts.map(p => p[0]).slice(-2).join('').toUpperCase();
+    }
+    toggleSidebar(localStorage.getItem('ps_sidebar_collapsed') === 'true' || innerWidth < 760);
+    await render();
+  } catch(error) {
+    console.error('Init error:', error);
+    if(content) {
+      content.innerHTML = `<div class="alert error"><b>Lỗi tải hệ thống:</b> ${esc(error.message)}</div><button id="retry-init">Thử lại</button>`;
+      const rb = $('#retry-init'); if(rb) rb.onclick = () => location.reload();
+    }
+  }
+})();

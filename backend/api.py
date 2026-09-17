@@ -57,10 +57,11 @@ def standards(db):
 def serialize(row,limits):
     data=dict(row.data)
     if row.module=='materials':
-        data['usage_status']=data.get('usage_status') or 'Chưa xác định'
+        data['usage_status']=data.get('usage_status') or 'Đang sử dụng'
         data['dossier_status']=data.get('dossier_status') or {'Compliant':'Đạt yêu cầu','Pending':'Chờ đánh giá','NG':'Cần cập nhật','Expired':'Cần cập nhật'}.get(data.get('status'),'Chưa đánh giá')
+    mat_display_status = data.get('status') or data.get('usage_status') or 'Đang sử dụng'
     return {'id':row.id,'module':row.module,'data':data,'version':row.version,'updated_at':row.updated_at.isoformat(),
-            'display_status':data['usage_status'] if row.module=='materials' else derived_status(row.module,row.data,limits)}
+            'display_status':mat_display_status if row.module=='materials' else derived_status(row.module,row.data,limits)}
 
 
 @router.get('/catalog')
@@ -68,13 +69,14 @@ def get_catalog(user: Account=Depends(current_user),db: Session=Depends(get_db))
     return {**catalog(),'permissions':permissions(user,db),'roles':ROLES}
 
 
-def filtered(rows,module,q='',status='',start='',end='',material='',dossier='',project=''):
+def filtered(rows,module,q='',status='',start='',end='',material='',dossier='',project='',category=''):
     output=[]
     for row in rows:
         if module and row['module']!=module: continue
         d=row['data']
         if q and q.casefold() not in json.dumps(d,ensure_ascii=False).casefold(): continue
-        if project and project.casefold() not in str(d.get('project','')).casefold(): continue
+        if project and project.casefold().replace('-', ' ').strip() not in str(d.get('project','')).casefold().replace('-', ' '): continue
+        if category and category.casefold() not in str(d.get('category','')).casefold(): continue
         if status and row['display_status']!=status: continue
         if dossier and d.get('dossier_status')!=dossier: continue
         if material and d.get('material_code')!=material: continue
@@ -86,11 +88,11 @@ def filtered(rows,module,q='',status='',start='',end='',material='',dossier='',p
 
 
 @router.get('/records')
-def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',dossier: str='',project: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=100),user: Account=Depends(current_user),db: Session=Depends(get_db)):
+def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',dossier: str='',project: str='',category: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=2000),user: Account=Depends(current_user),db: Session=Depends(get_db)):
     permit(user,db,module)
     limits=standards(db)
     rows=[serialize(r,limits) for r in db.scalars(select(Record).where(Record.module==module,Record.archived==False)).all()]
-    rows=filtered(rows,module,q,status,start,end,material,dossier,project)
+    rows=filtered(rows,module,q,status,start,end,material,dossier,project,category)
     rows.sort(key=lambda r:str(r['updated_at'] if sort=='updated_at' else r['data'].get(sort,'')).casefold(),reverse=direction=='desc')
     return {'items':rows[(page-1)*size:page*size],'total':len(rows),'page':page,'size':size}
 
@@ -106,7 +108,7 @@ INSPECTION_SETS={'inspection-results':('reports','oqc-reports','xrf-iqc','xrf-oq
 
 
 @router.get('/inspections/{collection}')
-def inspections(collection:str,q:str='',stage:str='',method:str='',result:str='',validity:str='',expiry_days:int|None=Query(None,ge=0,le=3650),page:int=Query(1,ge=1),size:int=Query(20,ge=1,le=100),user:Account=Depends(current_user),db:Session=Depends(get_db)):
+def inspections(collection:str,q:str='',stage:str='',method:str='',result:str='',validity:str='',expiry_days:int|None=Query(None,ge=0,le=3650),page:int=Query(1,ge=1),size:int=Query(20,ge=1,le=2000),user:Account=Depends(current_user),db:Session=Depends(get_db)):
     modules=INSPECTION_SETS.get(collection)
     if not modules: raise HTTPException(404)
     allowed=[m for m in modules if permissions(user,db).get(m,{}).get('View')]
@@ -393,3 +395,115 @@ def save_setting(key:str,body:dict,user:Account=Depends(admin_user),db:Session=D
     if row: row.value=body
     else: db.add(Setting(key=key,value=body))
     log(db,user.email,'Cài đặt: '+key,before=before,after=body); db.commit(); return body
+
+
+@router.post('/bom/import')
+def import_bom_api(user:Account=Depends(current_user), db:Session=Depends(get_db)):
+    permit(user, db, 'bom')
+    from backend.excel_import import import_project_bom
+    res = import_project_bom(db)
+    if res.get('status') == 'error':
+        raise HTTPException(400, res.get('message', 'Lỗi nhập BOM'))
+    log(db, user.email, 'Cập nhật BOM dự án từ file Excel', after=res)
+    return res
+
+
+@router.post('/bom/save')
+def save_bom_api(user:Account=Depends(current_user), db:Session=Depends(get_db)):
+    permit(user, db, 'bom', 'Edit')
+    count = db.query(Record).filter(Record.module=='bom', Record.archived==False).count()
+    log(db, user.email, 'Lưu và đồng bộ dữ liệu BOM', after={'total_bom': count})
+    db.commit()
+    return {'status':'ok', 'message':f'Đã lưu thành công {count} bản ghi BOM.', 'total':count}
+
+
+@router.delete('/bom')
+def delete_bom_api(project:str='', user:Account=Depends(current_user), db:Session=Depends(get_db)):
+    permit(user, db, 'bom', 'Delete')
+    query = db.query(Record).filter(Record.module=='bom', Record.archived==False)
+    if project:
+        rows = [r for r in query.all() if r.data.get('project')==project or r.data.get('parent_code')==project]
+    else:
+        rows = query.all()
+    count = len(rows)
+    deleted_codes = {r.data.get('material_code') for r in rows if r.data.get('material_code')}
+    deleted_projects = {r.data.get('project') for r in rows if r.data.get('project')}
+    if project:
+        deleted_projects.add(project)
+
+    for r in rows:
+        r.archived = True
+        r.updated_at = now()
+
+    # Determine remaining BOM codes and suppliers
+    remaining_bom_records = db.query(Record).filter(Record.module=='bom', Record.archived==False).all()
+    remaining_bom_codes = {r.data.get('material_code') for r in remaining_bom_records if r.data.get('material_code')}
+    remaining_suppliers = {r.data.get('supplier') for r in remaining_bom_records if r.data.get('supplier')}
+
+    # Synchronize materials: archive materials belonging to deleted BOM
+    mat_query = db.query(Record).filter(Record.module=='materials', Record.archived==False)
+    mats_archived = 0
+    for m in mat_query.all():
+        code = m.data.get('material_code')
+        mat_proj = m.data.get('project', '')
+        if project:
+            if mat_proj == project or (code in deleted_codes and code not in remaining_bom_codes):
+                m.archived = True
+                m.updated_at = now()
+                mats_archived += 1
+        else:
+            if code in deleted_codes or mat_proj in deleted_projects:
+                m.archived = True
+                m.updated_at = now()
+                mats_archived += 1
+
+    # Synchronize suppliers: archive suppliers not present in remaining BOM
+    sup_query = db.query(Record).filter(Record.module=='suppliers', Record.archived==False)
+    sups_archived = 0
+    for s in sup_query.all():
+        sup_name = s.data.get('supplier')
+        if sup_name not in remaining_suppliers:
+            s.archived = True
+            s.updated_at = now()
+            sups_archived += 1
+
+    log(db, user.email, f'Xóa dữ liệu BOM ({project if project else "Toàn bộ"}) & đồng bộ', after={'bom_count': count, 'materials_count': mats_archived, 'suppliers_count': sups_archived})
+    db.commit()
+    return {'status':'ok', 'count':count, 'materials_count': mats_archived, 'suppliers_count': sups_archived}
+
+
+
+POLYMERS_DEFAULTS = [
+    {'element':'Cd (Cadmium)','material_type':'Polymers','control_limit':35,'spec_limit':100,'rule':'≤ Control Limit'},
+    {'element':'Pb (Lead)','material_type':'Polymers','control_limit':35,'spec_limit':1000,'rule':'≤ Control Limit'},
+    {'element':'Hg (Mercury)','material_type':'Polymers','control_limit':70,'spec_limit':1000,'rule':'≤ Control Limit'},
+    {'element':'Cr (Chromium)','material_type':'Polymers','control_limit':350,'spec_limit':1000,'rule':'≤ Control Limit'},
+    {'element':'Br (Bromine)','material_type':'Polymers','control_limit':300,'spec_limit':1000,'rule':'≤ Control Limit'},
+    {'element':'Cl (Chlorine)','material_type':'Polymers','control_limit':630,'spec_limit':1500,'rule':'≤ Control Limit'},
+]
+
+
+@router.get('/xrf-limits')
+def xrf_limits(user:Account=Depends(current_user), db:Session=Depends(get_db)):
+    permit(user, db, 'xrf-standard')
+    rows = db.scalars(select(Record).where(Record.module=='xrf-standard', Record.archived==False)).all()
+    limits = standards(db)
+    return [serialize(r, limits) for r in rows]
+
+
+@router.post('/xrf-limits/seed')
+def seed_xrf_limits(user:Account=Depends(current_user), db:Session=Depends(get_db)):
+    permit(user, db, 'xrf-standard', 'Approve')
+    existing = db.scalars(select(Record).where(Record.module=='xrf-standard', Record.archived==False)).all()
+    existing_keys = {(str(r.data.get('element','')), str(r.data.get('material_type',''))) for r in existing}
+    created = 0
+    for item in POLYMERS_DEFAULTS:
+        key = (item['element'], item['material_type'])
+        if key not in existing_keys:
+            db.add(Record(module='xrf-standard', data=item, version=1, updated_at=now()))
+            created += 1
+    if created:
+        log(db, user.email, f'Seed {created} XRF control limits (Polymers)', after={'created': created})
+        db.commit()
+    return {'created': created, 'total': len(existing) + created}
+
