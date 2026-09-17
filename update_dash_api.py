@@ -1,17 +1,9 @@
-from collections import Counter, defaultdict
-from datetime import date
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-from backend.store import Account, Audit, Setting, get_db
-from backend.api import all_visible, standards, serialize
-from backend.operations import number, workbook_conflicts
-from login import current_user
+﻿import re
+with open('backend/dashboard.py', 'r', encoding='utf-8') as f:
+    content = f.read()
 
-router=APIRouter(prefix='/api')
-
-
-@router.get('/overview')
+# I will rewrite the overview function.
+new_overview = '''@router.get('/overview')
 def overview(user:Account=Depends(current_user),db:Session=Depends(get_db)):
     visible=all_visible(db,user); limits=standards(db)
     rows=[serialize(r,limits) for r in visible]
@@ -108,26 +100,9 @@ def overview(user:Account=Depends(current_user),db:Session=Depends(get_db)):
             'total_materials': total_active
         }
     }
-@router.get('/xrf-trend')
-def trend(element:str='pb',stage:str='',user:Account=Depends(current_user),db:Session=Depends(get_db)):
-    from fastapi import HTTPException
-    if element not in ('pb','cd','hg','cr','br','cl'): raise HTTPException(422)
-    if stage not in ('','IQC','OQC'): raise HTTPException(422)
-    visible=all_visible(db,user)
-    measurements=[r for r in visible if r.module in (('xrf-'+stage.lower(),) if stage else ('xrf-iqc','xrf-oqc'))]
-    groups=defaultdict(list)
-    for r in measurements:
-        d=r.data; value=number(d.get(element))
-        if value is not None and d.get('test_date'): groups[(d['test_date'][:7],d.get('material_code',''),r.module)].append(value)
-    items=[{'month':month,'material_code':code,'stage':module[4:].upper(),'maximum':max(values),'average':round(sum(values)/len(values),3),'count':len(values)} for (month,code,module),values in sorted(groups.items())]
-    coverage=[]
-    for r in visible:
-        if r.module!='xrf-plan': continue
-        d=r.data; codes={d.get('material_code'),d.get('old_code')}
-        if stage and d.get('test')!=stage: continue
-        for key,value in d.items():
-            if not key.startswith('plan_') or value!='Planned': continue
-            month=key[5:]
-            matches=[x for x in measurements if x.data.get('material_code') in codes and str(x.data.get('test_date','')).startswith(month) and x.data.get('test')==d.get('test')]
-            coverage.append({'plan_id':r.id,'material_code':d.get('material_code'),'month':month,'test':d.get('test'), 'tests':len(matches),'status':'Completed' if matches else 'Scheduled' if month>date.today().isoformat()[:7] else 'Pending' if month==date.today().isoformat()[:7] else 'Overdue'})
-    return {'element':element,'stage':stage,'items':items,'coverage':coverage,'basis':'Max/average tính lại từ số đo IQC result / OQC result, tách riêng công đoạn. Đây là nồng độ sàng lọc, không phải tỷ lệ PASS. Kế hoạch đối chiếu mã và Old Part Code.'}
+'''
+
+content = re.sub(r'@router\.get\(\'/overview\'\).*?(?=@router\.get)', new_overview, content, flags=re.DOTALL)
+
+with open('backend/dashboard.py', 'w', encoding='utf-8') as f:
+    f.write(content)

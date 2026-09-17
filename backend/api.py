@@ -68,12 +68,13 @@ def get_catalog(user: Account=Depends(current_user),db: Session=Depends(get_db))
     return {**catalog(),'permissions':permissions(user,db),'roles':ROLES}
 
 
-def filtered(rows,module,q='',status='',start='',end='',material='',dossier=''):
+def filtered(rows,module,q='',status='',start='',end='',material='',dossier='',project=''):
     output=[]
     for row in rows:
         if module and row['module']!=module: continue
         d=row['data']
         if q and q.casefold() not in json.dumps(d,ensure_ascii=False).casefold(): continue
+        if project and project.casefold() not in str(d.get('project','')).casefold(): continue
         if status and row['display_status']!=status: continue
         if dossier and d.get('dossier_status')!=dossier: continue
         if material and d.get('material_code')!=material: continue
@@ -85,11 +86,11 @@ def filtered(rows,module,q='',status='',start='',end='',material='',dossier=''):
 
 
 @router.get('/records')
-def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',dossier: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=100),user: Account=Depends(current_user),db: Session=Depends(get_db)):
+def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',dossier: str='',project: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=100),user: Account=Depends(current_user),db: Session=Depends(get_db)):
     permit(user,db,module)
     limits=standards(db)
     rows=[serialize(r,limits) for r in db.scalars(select(Record).where(Record.module==module,Record.archived==False)).all()]
-    rows=filtered(rows,module,q,status,start,end,material,dossier)
+    rows=filtered(rows,module,q,status,start,end,material,dossier,project)
     rows.sort(key=lambda r:str(r['updated_at'] if sort=='updated_at' else r['data'].get(sort,'')).casefold(),reverse=direction=='desc')
     return {'items':rows[(page-1)*size:page*size],'total':len(rows),'page':page,'size':size}
 
