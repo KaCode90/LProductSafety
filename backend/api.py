@@ -55,8 +55,12 @@ def standards(db):
 
 
 def serialize(row,limits):
-    return {'id':row.id,'module':row.module,'data':row.data,'version':row.version,'updated_at':row.updated_at.isoformat(),
-            'display_status':derived_status(row.module,row.data,limits)}
+    data=dict(row.data)
+    if row.module=='materials':
+        data['usage_status']=data.get('usage_status') or 'Chưa xác định'
+        data['dossier_status']=data.get('dossier_status') or {'Compliant':'Đạt yêu cầu','Pending':'Chờ đánh giá','NG':'Cần cập nhật','Expired':'Cần cập nhật'}.get(data.get('status'),'Chưa đánh giá')
+    return {'id':row.id,'module':row.module,'data':data,'version':row.version,'updated_at':row.updated_at.isoformat(),
+            'display_status':data['usage_status'] if row.module=='materials' else derived_status(row.module,row.data,limits)}
 
 
 @router.get('/catalog')
@@ -64,13 +68,14 @@ def get_catalog(user: Account=Depends(current_user),db: Session=Depends(get_db))
     return {**catalog(),'permissions':permissions(user,db),'roles':ROLES}
 
 
-def filtered(rows,module,q='',status='',start='',end='',material=''):
+def filtered(rows,module,q='',status='',start='',end='',material='',dossier=''):
     output=[]
     for row in rows:
         if module and row['module']!=module: continue
         d=row['data']
         if q and q.casefold() not in json.dumps(d,ensure_ascii=False).casefold(): continue
         if status and row['display_status']!=status: continue
+        if dossier and d.get('dossier_status')!=dossier: continue
         if material and d.get('material_code')!=material: continue
         dt=str(d.get('test_date') or d.get('expiry_date') or d.get('due_date') or d.get('issue_date') or '')
         if start and (not dt or dt<start): continue
@@ -80,11 +85,11 @@ def filtered(rows,module,q='',status='',start='',end='',material=''):
 
 
 @router.get('/records')
-def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=100),user: Account=Depends(current_user),db: Session=Depends(get_db)):
+def records(module: str, q: str='',status: str='',start: str='',end: str='', material: str='',dossier: str='',sort: str='updated_at',direction: str='desc',page: int=Query(1,ge=1),size: int=Query(20,ge=1,le=100),user: Account=Depends(current_user),db: Session=Depends(get_db)):
     permit(user,db,module)
     limits=standards(db)
     rows=[serialize(r,limits) for r in db.scalars(select(Record).where(Record.module==module,Record.archived==False)).all()]
-    rows=filtered(rows,module,q,status,start,end,material)
+    rows=filtered(rows,module,q,status,start,end,material,dossier)
     rows.sort(key=lambda r:str(r['updated_at'] if sort=='updated_at' else r['data'].get(sort,'')).casefold(),reverse=direction=='desc')
     return {'items':rows[(page-1)*size:page*size],'total':len(rows),'page':page,'size':size}
 
@@ -94,6 +99,38 @@ def search(q: str=Query('',max_length=200),user: Account=Depends(current_user),d
     if len(q.strip())<2: return []
     limits=standards(db)
     return [serialize(r,limits) for r in all_visible(db,user) if q.casefold() in json.dumps(r.data,ensure_ascii=False).casefold()][:50]
+
+
+INSPECTION_SETS={'inspection-results':('reports','oqc-reports','xrf-iqc','xrf-oqc','change-control'), 'inspection-plans':('test-plan','xrf-plan')}
+
+
+@router.get('/inspections/{collection}')
+def inspections(collection:str,q:str='',stage:str='',method:str='',result:str='',validity:str='',expiry_days:int|None=Query(None,ge=0,le=3650),page:int=Query(1,ge=1),size:int=Query(20,ge=1,le=100),user:Account=Depends(current_user),db:Session=Depends(get_db)):
+    modules=INSPECTION_SETS.get(collection)
+    if not modules: raise HTTPException(404)
+    allowed=[m for m in modules if permissions(user,db).get(m,{}).get('View')]
+    if not allowed: raise HTTPException(403,'Bạn không có quyền xem dữ liệu kiểm nghiệm.')
+    limits=standards(db); rows=[]
+    for record in db.scalars(select(Record).where(Record.archived==False,Record.module.in_(allowed))).all():
+        row=serialize(record,limits); d=row['data']; module=row['module']
+        row['stage']=d.get('inspection_stage') or {'reports':'IQC','oqc-reports':'OQC','xrf-iqc':'IQC','xrf-oqc':'OQC','change-control':'Khác'}.get(module) or (d.get('test') if d.get('test') in ('IQC','OQC') else 'Chưa xác định')
+        row['method']='XRF' if module.startswith('xrf-') or module=='change-control' else 'Lab / Bên thứ ba'
+        raw=str(d.get('result','')).strip().upper()
+        row['test_result']=('PASS' if row['display_status']=='Pass' else 'FAIL' if row['display_status']=='NG' else 'Chưa đánh giá') if row['method']=='XRF' else ('PASS' if raw=='PASS' else 'FAIL' if raw in ('FAIL','NG') else 'Chưa đánh giá')
+        try:
+            days=(date.fromisoformat(str(d.get('expiry_date')))-date.today()).days
+            row['validity']='Hết hạn' if days<0 else 'Sắp hết hạn' if days<=90 else 'Còn hạn'
+        except (ValueError,TypeError): row['validity']='Chưa có hạn'
+        if expiry_days is not None:
+            try: remaining=(date.fromisoformat(str(d.get('expiry_date')))-date.today()).days
+            except (ValueError,TypeError): continue
+            if not 0<=remaining<=expiry_days: continue
+        if q and q.casefold() not in json.dumps(d,ensure_ascii=False).casefold(): continue
+        if stage and stage!=row['stage'] or method and method!=row['method'] or result and result!=row['test_result'] or validity and validity!=row['validity']: continue
+        rows.append(row)
+    rows.sort(key=lambda r:(r['updated_at'],r['id']),reverse=True)
+    total=len(rows);page=min(page,max(1,(total+size-1)//size))
+    return {'items':rows[(page-1)*size:page*size],'total':total,'page':page,'size':size}
 
 
 @router.get('/records/{record_id}')
@@ -109,10 +146,32 @@ def detail(record_id:int,user:Account=Depends(current_user),db:Session=Depends(g
         for r in visible:
             if r.module=='xrf-plan' and r.data.get('material_code')==code and r.data.get('old_code'):
                 aliases.add(r.data['old_code'])
-        related=[r for r in visible if r.id!=row.id and (r.data.get('material_code') in aliases or r.module=='suppliers' and r.data.get('supplier')==row.data.get('supplier'))]
+        supplier_names={r.data.get('supplier') for r in visible if r.data.get('material_code') in aliases and r.module in ('materials','bom','reports','fmd')}
+        supplier_names.update(r.data.get('supplier') for r in visible if r.module=='suppliers' and aliases.intersection(str(r.data.get('material_codes','')).splitlines()))
+        supplier_names.add(row.data.get('supplier'));supplier_names.discard(None);supplier_names.discard('')
+        related=[r for r in visible if r.id!=row.id and (r.data.get('material_code') in aliases or r.module=='suppliers' and r.data.get('supplier') in supplier_names)]
+        result['supplier_names']=sorted(supplier_names)
         result['related']=[serialize(r,limits) for r in related]
+        related_ids=[r.id for r in related]
+        attachments={}
+        if related_ids:
+            for evidence in db.scalars(select(Evidence).where(Evidence.record_id.in_(related_ids))).all():
+                attachments.setdefault(evidence.record_id,[]).append({'id':evidence.id,'name':evidence.name})
+        for item in result['related']:
+            item['files']=attachments.get(item['id'],[])
         result['aliases']=sorted(aliases)
         result['conflicts']=[c for c in workbook_conflicts(visible) if c['material_code']==code]
+    if row.module=='suppliers':
+        name=row.data.get('supplier')
+        visible=all_visible(db,user)
+        supplied=[r for r in visible if name and r.id!=row.id and r.data.get('supplier')==name]
+        codes={r.data.get('material_code') for r in supplied if r.module in ('materials','bom','fmd','reports') and r.data.get('material_code')}
+        codes.update(code.strip() for code in str(row.data.get('material_codes','')).splitlines() if code.strip())
+        result['related']=[serialize(r,limits) for r in supplied if r.module!='materials']
+        result['materials']=[serialize(r,limits) for r in visible if r.module=='materials' and r.data.get('material_code') in codes]
+    if row.module=='bom':
+        code=row.data.get('material_code')
+        result['materials']=[serialize(r,limits) for r in all_visible(db,user) if code and r.module=='materials' and r.data.get('material_code')==code]
     return result
 
 
@@ -151,6 +210,7 @@ def check_workflow(user,db,module,data,record_id=None,before=None):
     if module=='xrf-standard': permit(user,db,module,'Approve')
     if data.get('approval') in ('Approved','Rejected') and data.get('approval')!=before.get('approval'):
         permit(user,db,module,'Approve')
+    if module=='materials' and data.get('dossier_status')=='Đạt yêu cầu' and before.get('dossier_status')!='Đạt yêu cầu': permit(user,db,module,'Approve')
     if data.get('status')=='Compliant' and before.get('status')!='Compliant': permit(user,db,module,'Approve')
     if data.get('status')=='Closed' and before.get('status')!='Closed':
         permit(user,db,module,'Close')
@@ -224,11 +284,11 @@ def download(evidence_id:int,inline:bool=False,user:Account=Depends(current_user
 
 
 @router.get('/export/{module}')
-def export(module:str,q:str='',status:str='',start:str='',end:str='',user:Account=Depends(current_user),db:Session=Depends(get_db)):
+def export(module:str,q:str='',status:str='',start:str='',end:str='',dossier:str='',user:Account=Depends(current_user),db:Session=Depends(get_db)):
     permit(user,db,module)
     from openpyxl import Workbook
     limits=standards(db)
-    rows=filtered([serialize(r,limits) for r in all_visible(db,user)],module,q,status,start,end)
+    rows=filtered([serialize(r,limits) for r in all_visible(db,user)],module,q,status,start,end,dossier=dossier)
     wb=Workbook(); sheet=wb.active; sheet.title='Product Safety'
     columns=MODULES[module]['fields']
     sheet.append([f['label'] for f in columns]+['Trạng thái tính toán','Nguồn file','Sheet','Dòng','Version'])

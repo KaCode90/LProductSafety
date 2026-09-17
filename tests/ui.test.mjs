@@ -26,6 +26,7 @@ async function boot(overrides={}){
     else if(u.pathname==='/api/auth/me')data={user:{id:1,name:'QA Admin',email:'qa@example.test',role:'Admin'},csrf:'test'};
     else if(u.pathname==='/api/catalog')data=catalog;
     else if(u.pathname==='/api/overview')data=summary;
+    else if(u.pathname.startsWith('/api/inspections/'))data={items:[],total:0,page:1,size:20};
     else if(u.pathname==='/api/records')data={items:[],total:0,page:1,size:20};
     else if(u.pathname==='/api/records/1')data={id:1,module:'materials',version:1,updated_at:'2026-09-15T09:00:00',display_status:'Pending',data:{material_code:'TEST-1',material_name:'Test material'},evidence:[],history:[],related:[],aliases:['TEST-1'],conflicts:[]};
     else if(u.pathname==='/api/imports')data={files:[],conflicts:[]};
@@ -53,15 +54,198 @@ test('Dashboard renders with no alerts/activity; sidebar has all six groups',asy
   }finally{dom.window.close();}
 });
 
+test('Dashboard separates IQC/OQC trends and opens expiry report lists',async()=>{
+  const requests=[];
+  const app=await boot({'/api/xrf-trend':async u=>{requests.push(u.searchParams);return {items:[{month:'2026-09',maximum:u.searchParams.get('stage')==='IQC'?10:90,average:5,count:2}],coverage:[]};}});
+  try{
+    const doc=app.w.document;
+    assert.equal(doc.querySelectorAll('.report-metric').length,4);
+    assert.equal(doc.querySelectorAll('.quality-trend').length,2);
+    assert.match(doc.querySelectorAll('.quality-trend')[0].textContent,/IQC Trend/);
+    assert.match(doc.querySelectorAll('.quality-trend')[1].textContent,/OQC Trend/);
+    assert.equal(requests[0].get('stage'),'IQC');assert.equal(requests[1].get('stage'),'OQC');
+    await doc.querySelector('[data-report-validity="Hết hạn"]').onclick();
+    assert.equal(doc.querySelector('#modal').open,true);
+    assert.match(doc.querySelector('#modal-title').textContent,/Hết hạn/);
+    doc.querySelector('[data-close]').click();
+    await doc.querySelector('#dashboard-element').onchange({target:{value:'cd'}});
+    assert.equal(requests.at(-1).get('element'),'cd');
+    await app.route('xrf-trend/IQC');
+    assert.equal(doc.querySelector('#topbar-title').textContent,'IQC Trend');
+  }finally{app.dom.window.close();}
+});
+
+test('Material list and form separate usage, dossier and optional owner',async()=>{
+  const app=await boot();
+  try{
+    const page=await app.route('materials'),doc=app.w.document;
+    assert.match(page.querySelector('thead').textContent,/Trạng thái sử dụng/);
+    assert.match(page.querySelector('thead').textContent,/Tình trạng hồ sơ/);
+    assert.doesNotMatch(page.querySelector('thead').textContent,/DRI|Nhà sản xuất/);
+    assert.ok(page.querySelector('select[name="dossier"]'));
+    assert.doesNotMatch(page.querySelector('select[name="status"]').textContent,/Pending|Completed/);
+    app.w.testApp.recordForm('materials');
+    assert.equal(doc.querySelector('#record-form [name="dri"]').value,'');
+    assert.equal(doc.querySelector('#record-form [name="status"]'),null);
+    assert.ok(doc.querySelector('#record-form [name="usage_status"]'));
+    assert.ok(doc.querySelector('#record-form [name="dossier_status"]'));
+  }finally{app.dom.window.close();}
+});
+
+test('Unified inspection screens filter, paginate and create original record types',async()=>{
+  const requests=[];
+  const app=await boot({'/api/inspections/inspection-results':async u=>{
+    requests.push(u.searchParams);
+    return {items:[],total:30,page:Number(u.searchParams.get('page')),size:Number(u.searchParams.get('size'))};
+  }});
+  try{
+    const doc=app.w.document;
+    await app.route('inspection-results');
+    assert.equal(doc.querySelector('.alert.error'),null);
+    assert.equal(doc.querySelectorAll('#submenu-materials .nav-link').length,6);
+    const form=doc.querySelector('#inspection-filters');
+    form.elements.stage.value='OQC';form.elements.method.value='XRF';
+    await form.onsubmit({preventDefault(){},target:form});
+    assert.equal(requests.at(-1).get('stage'),'OQC');
+    assert.equal(requests.at(-1).get('method'),'XRF');
+    await doc.querySelector('#inspection-next').onclick();
+    assert.equal(requests.at(-1).get('page'),'2');
+    assert.equal(requests.at(-1).get('method'),'XRF');
+    doc.querySelector('#inspection-add').click();
+    doc.querySelector('[data-inspection-create="oqc-reports"]').click();
+    assert.equal(doc.querySelector('[name="inspection_stage"]').value,'OQC');
+    doc.querySelector('[data-close]').click();
+    await app.route('inspection-plans');
+    assert.equal(doc.querySelector('.alert.error'),null);
+    assert.ok(doc.querySelector('#inspection-filters'));
+  }finally{app.dom.window.close();}
+});
+
+test('Organization shows six draft functions and supports saved responsibilities and drawer',async()=>{
+  let rows=[];
+  const row={id:101,module:'organization',version:1,data:{department_name:'Team Lead (QA)',org_unit:'Team Lead (QA)',primary:'QA Owner',responsibility:'Review HSF\nApprove reports'},history:[]};
+  const app=await boot({'/api/records':async()=>({items:rows,total:rows.length,page:1}),'/api/records/101':async()=>row});
+  try{
+    const doc=app.w.document;
+    await app.route('organization');
+    assert.equal(doc.querySelectorAll('.org-unit').length,6);
+    assert.equal(doc.querySelectorAll('[data-org-template]').length,6);
+    doc.querySelector('[data-org-template="0"]').click();
+    assert.match(doc.querySelector('#modal').textContent,/HSF/);
+    assert.match(doc.querySelector('#modal').textContent,/chưa lưu/);
+    doc.querySelector('#org-use-template').click();
+    assert.ok(doc.querySelector('#modal').classList.contains('org-drawer'));
+    assert.equal(doc.querySelector('[name="department_name"]').value,'Team Lead (QA)');
+    assert.match(doc.querySelector('[name="responsibility"]').value,/Phê duyệt danh sách/);
+    doc.querySelector('[data-close]').click();
+    rows=[row];
+    await app.route('organization');
+    assert.equal(doc.querySelectorAll('[data-org-template]').length,5);
+    await doc.querySelector('[data-org-record="101"]').onclick();
+    assert.match(doc.querySelector('#modal').textContent,/QA Owner/);
+    assert.equal(doc.querySelectorAll('.org-duties li').length,2);
+    doc.querySelector('[data-close]').click();
+    await doc.querySelector('[data-org-view="table"]').onclick();
+    assert.match(doc.querySelector('.org-table').textContent,/Review HSF/);
+    assert.equal(doc.querySelector('.org-table tbody tr').children.length,4);
+    await app.route('materials');
+    assert.equal(doc.querySelector('#content').classList.contains('organization-page'),false);
+  }finally{app.dom.window.close();}
+});
+
+test('Main menus only toggle submenus without navigation or requests',async()=>{
+  const app=await boot();
+  try{
+    await app.route('cts-1');
+    const doc=app.w.document, page=doc.querySelector('#content'), original=page.innerHTML, hash=app.w.location.hash;
+    let requests=0;
+    const fetch=app.w.fetch;
+    app.w.fetch=(...args)=>{requests++;return fetch(...args);};
+    for(const button of doc.querySelectorAll('[data-group]:not([data-group="dashboard"])')){
+      const submenu=doc.querySelector('#submenu-'+button.dataset.group);
+      const before=submenu.hidden;
+      button.click();
+      assert.equal(submenu.hidden,!before);
+      assert.equal(button.getAttribute('aria-expanded'),String(before));
+      button.click();
+      assert.equal(submenu.hidden,before);
+      assert.equal(app.w.location.hash,hash);
+      assert.equal(page.innerHTML,original);
+    }
+    assert.equal(requests,0);
+  }finally{app.dom.window.close();}
+});
+
 test('Every module renders and binds its empty table controls',async()=>{
   const app=await boot();
-  try{for(const module of Object.keys(catalog.modules)){
+  try{for(const module of Object.keys(catalog.modules).filter(m=>m!=='organization')){
     const page=await app.route(module);
     assert.equal(page.querySelector('.alert.error'),null,module+': '+page.textContent);
     assert.ok(page.querySelector('#filters'),module);
     assert.equal(typeof page.querySelector('#export').onclick,'function',module);
-    assert.equal(app.w.document.querySelector('.nav-link.active')?.getAttribute('href'),'#/'+module);
+    assert.equal(app.w.document.querySelector('.nav-link.active')?.getAttribute('href'),'#/'+(['reports','oqc-reports','xrf-iqc','xrf-oqc','change-control'].includes(module)?'inspection-results':['test-plan','xrf-plan'].includes(module)?'inspection-plans':module));
   }}finally{app.dom.window.close();}
+});
+
+test('Lists paginate records and move descriptions beneath the title',async()=>{
+  const requests=[];
+  const app=await boot({'/api/records':async u=>{
+    const page=Number(u.searchParams.get('page')),size=Number(u.searchParams.get('size'));
+    requests.push({page,size,q:u.searchParams.get('q')});
+    return {page,size,total:53,items:Array.from({length:Math.max(0,Math.min(size,53-(page-1)*size))},(_,i)=>({id:(page-1)*size+i+1,module:'cts-1',data:{chemical_group:'Chemical '+((page-1)*size+i+1),cas_no:'123-45-6'},display_status:'Pending'}))};
+  }});
+  try{
+    const doc=app.w.document;
+    await app.route('cts-1');
+    const size=requests.at(-1).size;
+    assert.ok(size>0&&size<20);
+    assert.match(doc.querySelector('#topbar-updated').textContent,/Danh mục tiêu chuẩn/);
+    assert.equal(doc.querySelector('#topbar-updated').hidden,false);
+    assert.equal(doc.querySelector('#content .page-head'),null);
+    assert.equal(doc.querySelectorAll('tbody tr').length,size);
+    assert.equal(doc.querySelector('#prev-page').disabled,true);
+    await doc.querySelector('#next-page').onclick();
+    assert.equal(requests.at(-1).page,2);
+    assert.equal(doc.querySelector('tbody [data-open]').dataset.open,String(size+1));
+    assert.equal(doc.querySelector('[aria-current="page"][data-page]').dataset.page,'2');
+    await doc.querySelector('[data-page="1"]').onclick();
+    assert.equal(requests.at(-1).page,1);
+    const last=Math.ceil(53/size);
+    await doc.querySelector(`[data-page="${last}"]`).onclick();
+    assert.equal(doc.querySelector('#next-page').disabled,true);
+    assert.equal(doc.querySelectorAll('tbody tr').length,53-(last-1)*size);
+  }finally{app.dom.window.close();}
+});
+
+test('Compact dashboard actions and XRF navigation work',async()=>{
+  const app=await boot();
+  const doc=app.w.document;
+  try{
+    assert.equal(doc.querySelectorAll('.overview-metric').length,4);
+    assert.equal(doc.querySelectorAll('.compliance-row').length,3);
+    assert.ok([...doc.querySelectorAll('.nav-children')].every(el=>el.hidden));
+    assert.equal(doc.querySelectorAll('[data-group]')[2].dataset.group,'materials');
+    doc.querySelector('#dashboard-search').click();
+    assert.equal(doc.activeElement.id,'global-search');
+    doc.querySelector('#dashboard-add').click();
+    doc.querySelector('[data-create="materials"]').click();
+    assert.ok(doc.querySelector('#record-form'));
+    doc.querySelector('[data-close]').click();
+    doc.querySelector('[data-alert-kind="reports"]').click();
+    assert.ok(doc.querySelector('#modal').open);
+    doc.querySelector('[data-close]').click();
+    await app.route('xrf-iqc');
+    const group=doc.querySelector('[data-group="materials"]');
+    assert.equal(group.getAttribute('aria-expanded'),'true');
+    assert.ok(doc.querySelector('#submenu-materials .nav-link.active'));
+    group.click();
+    assert.equal(doc.querySelector('#submenu-materials').hidden,true);
+    for(const route of ['tasks','activity']){
+      const page=await app.route(route);
+      assert.equal(page.querySelector('.alert.error'),null);
+      assert.doesNotMatch(page.textContent,/Không tìm thấy trang/);
+    }
+  }finally{app.dom.window.close();}
 });
 
 test('Group, record, imports, settings and unknown routes render without missing helpers',async()=>{

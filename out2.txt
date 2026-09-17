@@ -1,0 +1,180 @@
+[
+  {
+    "id": "dashboard",
+    "name": "Dashboard",
+    "items": [
+      {
+        "id": "dashboard",
+        "name": "Dashboard"
+      }
+    ]
+  },
+  {
+    "id": "materials",
+    "name": "Vật liệu & Kiểm nghiệm",
+    "items": [
+      {
+        "id": "cts-2",
+        "name": "CTS_2 – Yêu cầu kiểm soát IQC/OQC"
+      },
+      {
+        "id": "cts-3",
+        "name": "CTS_3 – VOC / SVHC"
+      },
+      {
+        "id": "cts-1",
+        "name": "CTS_1 – Chất hạn chế"
+      },
+      {
+        "id": "declarations",
+        "name": "Tuyên bố tuân thủ "
+      },
+      {
+        "id": "materials",
+        "name": "Danh mục vật liệu"
+      },
+      {
+        "id": "suppliers",
+        "name": "Hồ sơ nhà cung cấp"
+      },
+      {
+        "id": "reports",
+        "name": "Báo cáo thử nghiệm / TRM"
+      },
+      {
+        "id": "material-declarations",
+        "name": "Tuyên bố / Declaration"
+      },
+      {
+        "id": "fmd",
+        "name": "FMD – Thành phần & CAS"
+      },
+      {
+        "id": "bom",
+        "name": "BOM – Project / POR / DOE"
+      },
+      {
+        "id": "test-plan",
+        "name": "Kế hoạch test bên thứ ba"
+      },
+      {
+        "id": "oqc-reports",
+        "name": "Báo cáo thành phẩm / OQC"
+      },
+      {
+        "id": "xrf-plan",
+        "name": "XRF – Kế hoạch NPI / MP"
+      },
+      {
+        "id": "xrf-iqc",
+        "name": "XRF – Kết quả IQC"
+      },
+      {
+        "id": "xrf-oqc",
+        "name": "XRF – Kết quả OQC"
+      },
+      {
+        "id": "change-control",
+        "name": "XRF – Change Control"
+      },
+      {
+        "id": "xrf-trend",
+        "name": "XRF – Xu hướng & thực hiện"
+      },
+      {
+        "id": "material-declarations",
+        "name": "Declaration theo vật liệu"
+      }
+    ]
+  },
+  {
+    "id": "management",
+    "name": "Quản lý",
+    "items": [
+      {
+        "id": "organization",
+        "name": "Sơ đồ tổ chức & Trách nhiệm"
+      },
+      {
+        "id": "training",
+        "name": "Đào tạo"
+      },
+      {
+        "id": "risk",
+        "name": "Công đoạn rủi ro cao"
+      },
+      {
+        "id": "ncr",
+        "name": "Non-Conformity"
+      },
+      {
+        "id": "capa",
+        "name": "CAPA"
+      }
+    ]
+  },
+  {
+    "id": "documents",
+    "name": "Trung tâm tài liệu",
+    "items": [
+      {
+        "id": "procedures",
+        "name": "Quy trình & Tiêu chuẩn"
+      },
+      {
+        "id": "documents",
+        "name": "Hồ sơ"
+      },
+      {
+        "id": "retention-records",
+        "name": "Lưu mẫu / Lưu dữ liệu"
+      },
+      {
+        "id": "appendices",
+        "name": "Phụ lục"
+      },
+      {
+        "id": "imports",
+        "name": "Nguồn Excel & đối chiếu"
+      }
+    ]
+  },
+  {
+    "id": "settings",
+    "name": "Cài đặt",
+    "items": [
+      {
+        "id": "xrf-standard",
+        "name": "XRF – Giới hạn kiểm soát"
+      },
+      {
+        "id": "master-data",
+        "name": "Master Data"
+      },
+      {
+        "id": "users",
+        "name": "Quản lý người dùng"
+      },
+      {
+        "id": "roles",
+        "name": "Vai trò & Phân quyền"
+      },
+      {
+        "id": "notifications",
+        "name": "Cài đặt thông báo"
+      },
+      {
+        "id": "retention",
+        "name": "Quy định lưu trữ"
+      },
+      {
+        "id": "system",
+        "name": "Cấu hình hệ thống"
+      },
+      {
+        "id": "xrf-standard",
+        "name": "Tiêu chuẩn / Giới hạn XRF"
+      }
+    ]
+  }
+]

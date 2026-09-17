@@ -8,16 +8,12 @@
   },
   {
     "id": "materials",
-    "name": "Sản phẩm & Vật liệu",
+    "name": "Vật liệu & Kiểm nghiệm",
     "href": "/materials",
     "icon": "package-search",
     "children": [
       {
-        "name": "BOM / Sản phẩm",
-        "href": "/materials/bom"
-      },
-      {
-        "name": "Danh mục NVL",
+        "name": "Danh mục vật liệu",
         "href": "/materials"
       },
       {
@@ -25,8 +21,40 @@
         "href": "/materials/suppliers"
       },
       {
-        "name": "Kế hoạch kiểm nghiệm",
-        "href": "/materials/test-plan"
+        "name": "Kế hoạch & Yêu cầu kiểm nghiệm",
+        "href": "/materials/inspection-plans"
+      },
+      {
+        "name": "Kết quả & Báo cáo kiểm nghiệm",
+        "href": "/materials/inspection-results"
+      },
+      {
+        "name": "FMD / Thành phần hóa học",
+        "href": "/materials/fmd"
+      },
+      {
+        "name": "BOM / Cấu trúc sản phẩm",
+        "href": "/materials/bom"
+      },
+      {
+        "name": "CTS_1 – Chất hạn chế",
+        "href": "/materials/cts-1"
+      },
+      {
+        "name": "CTS_2 – Yêu cầu kiểm soát IQC/OQC",
+        "href": "/materials/cts-2"
+      },
+      {
+        "name": "CTS_3 – VOC / SVHC",
+        "href": "/materials/cts-3"
+      },
+      {
+        "name": "Tuyên bố tuân thủ",
+        "href": "/materials/declarations"
+      },
+      {
+        "name": "Declaration theo vật liệu",
+        "href": "/materials/material-declarations"
       }
     ]
   },

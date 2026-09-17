@@ -27,6 +27,58 @@
       {
         "name": "Kế hoạch kiểm nghiệm",
         "href": "/materials/test-plan"
+      },
+      {
+        "name": "XRF – Kế hoạch NPI / MP",
+        "href": "/materials/xrf-plan"
+      },
+      {
+        "name": "FMD – Thành phần & CAS",
+        "href": "/materials/fmd"
+      },
+      {
+        "name": "Báo cáo thử nghiệm / TRM",
+        "href": "/materials/reports"
+      },
+      {
+        "name": "Báo cáo thành phẩm / OQC",
+        "href": "/materials/oqc-reports"
+      },
+      {
+        "name": "XRF – Kết quả IQC",
+        "href": "/materials/xrf-iqc"
+      },
+      {
+        "name": "XRF – Kết quả OQC",
+        "href": "/materials/xrf-oqc"
+      },
+      {
+        "name": "XRF – Change Control",
+        "href": "/materials/change-control"
+      },
+      {
+        "name": "XRF – Xu hướng & thực hiện",
+        "href": "/materials/xrf-trend"
+      },
+      {
+        "name": "CTS_1 – Chất hạn chế",
+        "href": "/materials/cts-1"
+      },
+      {
+        "name": "CTS_2 – IQC / OQC",
+        "href": "/materials/cts-2"
+      },
+      {
+        "name": "CTS_3 – VOC / SVHC",
+        "href": "/materials/cts-3"
+      },
+      {
+        "name": "Tuyên bố tuân thủ",
+        "href": "/materials/declarations"
+      },
+      {
+        "name": "Tuyên bố / Declaration",
+        "href": "/materials/material-declarations"
       }
     ]
   },
