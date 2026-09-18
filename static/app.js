@@ -105,8 +105,8 @@ const columnPreferences = {
   'test-types': ['name', 'standard', 'description', 'default_selected'],
   'test-plan': ['project', 'material_code', 'material_name', 'test_type', 'test'],
   'xrf-plan': ['project', 'material_code', 'material_name', 'supplier', 'test'],
-  'xrf-iqc': ['material_code', 'lot', 'test_date', 'material_type', 'pb'],
-  'xrf-oqc': ['material_code', 'lot', 'test_date', 'material_type', 'pb'],
+  'xrf-iqc': ['material_code', 'material_name', 'lot', 'test_date', 'material_type', 'pb'],
+  'xrf-oqc': ['material_code', 'material_name', 'lot', 'test_date', 'material_type', 'pb'],
   'change-control': ['material_code', 'notes', 'test_date', 'material_type', 'pb'],
   'xrf-standard': ['element', 'material_type', 'control_limit', 'spec_limit', 'rule'],
   'cts-1': ['chemical_group', 'cas_no'],
@@ -1198,12 +1198,7 @@ async function materialsListPage() {
 
     return `
       <tr>
-        <td style="padding:6px 10px">
-          <div>
-            <button class="link-button" data-open="${m.id}" style="font-weight:700;font-size:12.5px;color:#0f172a;font-family:monospace">${esc(code)}</button>
-            <div style="font-size:11px;color:#64748b;margin-top:1px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(name)}">${esc(name)}</div>
-          </div>
-        </td>
+        <td style="padding:6px 10px"><button class="link-button" data-open="${m.id}" style="font-weight:700;font-size:12.5px;color:#0f172a;font-family:monospace">${esc(code)}</button></td><td style="padding:6px 10px"><div style="font-size:11px;color:#64748b;white-space:normal" title="${esc(name)}">${esc(name)}</div></td>
         <td style="padding:6px 10px">
           <span class="badge" style="background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;font-size:10.5px">${esc(cat)}</span>
         </td>
@@ -1261,7 +1256,7 @@ async function materialsListPage() {
         <table style="width:100%">
           <thead>
             <tr>
-              <th style="padding:8px 10px"><button class="link-button" data-sort="material_code">Mã & Tên vật liệu ${listState.sort==='material_code'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="material_code">Part Code ${listState.sort==='material_code'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th><th style="padding:8px 10px"><button class="link-button" data-sort="material_name">Part Name ${listState.sort==='material_name'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
               <th style="padding:8px 10px"><button class="link-button" data-sort="category">Phân loại ${listState.sort==='category'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
               <th style="padding:8px 10px"><button class="link-button" data-sort="supplier">Nhà cung cấp & Cam kết ${listState.sort==='supplier'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
               <th style="padding:8px 10px;min-width:180px">Hồ sơ Báo cáo kiểm nghiệm</th>
@@ -1490,10 +1485,7 @@ async function finishedGoodsTestPlanPage() {
     else resBadge = '<span style="color:#b45309;background:#fef3c7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">' + esc(res) + '</span>';
 
     return `<tr>
-      <td>
-        <div style="font-weight:600;color:#0f172a"><button class="link-button" data-open="${m.id}">${esc(name)}</button></div>
-        <div style="font-size:10.5px;color:#64748b;margin-top:2px">${esc(code)}</div>
-      </td>
+      <td><button class="link-button" data-open="${m.id}" style="font-weight:700;color:#0f172a">${esc(code)}</button></td><td>${esc(name)}</td>
       <td>
         <div style="font-size:12px;color:#1e293b">${esc(type)}</div>
         <div style="font-size:10px;color:#64748b;margin-top:2px">${esc(test)}</div>
@@ -2205,6 +2197,15 @@ const openUploadReportModal = openMaterialEditModal;
 function detailPage(row){
   const config=catalog.modules[row.module];
   const d=row.data;
+  let xrfLinkHtml = '';
+  if (row.module === 'xrf-iqc' || row.module === 'xrf-oqc') {
+    xrfLinkHtml = '<div id="xrf-link-info" style="margin-bottom:15px;padding:12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;font-size:13px;display:flex;align-items:center;gap:8px;"><span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Đang kiểm tra liên kết danh mục NVL...</div>';
+  }
+  let materialHistoryHtml = '';
+  if (row.module === 'materials') {
+    materialHistoryHtml = '<div id="material-xrf-history" style="margin-top:20px;"><div style="padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;display:flex;align-items:center;gap:8px;"><span class="spinner" style="width:16px;height:16px;border-width:2px;"></span> Đang tải lịch sử test XRF...</div></div>';
+  }
+
   const sections=config.fields.filter(f=>d[f.key]!==undefined&&d[f.key]!=='');
   let actionsHtml=`<button data-route="${row.module}">← Danh sách</button>${can(row.module,'Edit')?'<button id="edit-record" class="primary">Chỉnh sửa</button>':''}${can(row.module,'Delete')?'<button id="archive-record" class="danger">Lưu trữ</button>':''}`;
 
@@ -2959,7 +2960,39 @@ async function xrfPage(tab) {
         const hasDri = config.fields.some(f=>f.key==='dri');
         const hasStatus = config.fields.some(f=>f.key==='status') || result.items.some(r=>r.display_status);
         const xrfOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${result.total} mục)`:`${v} / trang`}</option>`).join('');
-        pageHtml = `<section class="card"><form class="toolbar" id="filters" data-module="${module}"><input type="search" name="q" placeholder="Tìm mã NVL, tên, lô…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${config.fields.some(f=>f.type==='date') ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${xrfOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" data-module="${module}" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" data-module="${module}" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
+        pageHtml = `<section class="card"><form class="toolbar" id="filters" data-module="${module}"><input type="search" name="q" placeholder="Tìm mã NVL, tên, lô…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${config.fields.some(f=>f.type==='date') ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${xrfOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" data-module="${module}" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" data-module="${module}" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>
+    ${result.items.map(r => {
+        if (module === 'xrf-iqc' || module === 'xrf-oqc') {
+            const d = r.data || {};
+            const code = d.material_code || '';
+            const name = d.material_name || '';
+            const lot = d.lot || '-';
+            const date = d.test_date ? new Date(d.test_date).toLocaleDateString('vi-VN') : '-';
+            const type = d.material_type || '';
+            const pb = d.pb || '0';
+            const res = (d.result || r.display_status || 'PASS').toUpperCase();
+            
+            let resBadge = '';
+            if (res === 'PASS' || res === 'OK') resBadge = '<span class="badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;font-weight:600">PASS</span>';
+            else resBadge = '<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:600">' + esc(res) + '</span>';
+            
+            let html = `<tr>`;
+            html += `<td style="padding:6px 10px"><button class="link-button" data-open="${r.id}" style="font-weight:700;font-size:12.5px;color:#0f172a;font-family:monospace">${esc(code)}</button></td>`;
+            html += `<td style="padding:6px 10px"><div style="font-size:11px;color:#64748b;white-space:normal;max-width:200px">${esc(name)}</div></td>`;
+            html += `<td style="padding:6px 10px;font-family:monospace;font-size:12px">${esc(lot)}</td>`;
+            html += `<td style="padding:6px 10px;font-size:12px">${esc(date)}</td>`;
+            html += `<td style="padding:6px 10px"><span class="badge" style="background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;font-size:10.5px">${esc(type)}</span></td>`;
+            html += `<td style="padding:6px 10px;font-weight:600">${esc(pb)}</td>`;
+            if (hasDri) html += `<td style="padding:6px 10px">${esc(d.dri||'Chưa phân công')}</td>`;
+            if (hasStatus) html += `<td style="padding:6px 10px">${resBadge}</td>`;
+            html += `<td style="padding:6px 10px"><button class="link-button" data-open="${r.id}" style="font-size:11.5px">Chi tiết</button></td>`;
+            html += `</tr>`;
+            return html;
+        } else {
+            return `<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">Chi tiết</button></td></tr>`;
+        }
+    }).join('')}
+    </tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
     }
     
     return head('XRF Monitoring', '') + tabs + pageHtml;
