@@ -1,4 +1,4 @@
-import {esc,label,badge,dateText,timeText,sourceText,percent,empty} from './ui.js?v=7';
+﻿import {esc,label,badge,dateText,timeText,sourceText,percent,empty} from './ui.js?v=7';
 const $=s=>document.querySelector(s);
 const content=$('#content'),modal=$('#modal');
 function getOptimalPageSize(){
@@ -10,6 +10,7 @@ function getOptimalPageSize(){
 }
 let loginAt,user,csrf,catalog,overview,requestId=0,currentModule='',listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:getOptimalPageSize()},toastTimer;
 window.listState = listState;
+let pendingMaterialSupplierFilter = '';
 let currentDetail=null;
 const icons={dashboard:'◫',compliance:'◇',xrf:'◉',materials:'▣',management:'♙',documents:'▤',settings:'⚙'};
 const names={'inspection-plans':'Kế hoạch kiểm nghiệm',imports:'Nguồn Excel & đối chiếu','xrf-trend':'Xu hướng XRF & thực hiện kế hoạch',users:'Quản lý người dùng',roles:'Vai trò & Phân quyền',notifications:'Cài đặt thông báo',retention:'Quy định lưu trữ',system:'Cấu hình hệ thống'};
@@ -50,7 +51,7 @@ async function api(path, options = {}) {
   return data;
 }
 function notify(text){clearTimeout(toastTimer);$('#toast').textContent=text;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,5500);}
-function goto(route){if(location.hash==='#/'+route)render();else location.hash='/'+route;}
+function goto(route){if(location.hash==='#/'+route)render();else location.hash='#/'+route;}
 function title(id){return catalog.modules[id]?.title||names[id]||'Product Safety';}
 function can(module,action){return !!catalog.permissions[module]?.[action];}
 function openModal(name,body,footer=''){
@@ -696,8 +697,8 @@ async function suppliersListPage() {
 
   const supplierOptimal = (function() {
     const vh = window.innerHeight || 900;
-    const count = Math.floor((vh - 350) / 42.5);
-    return Math.max(8, Math.min(30, count)) || 13;
+    const count = Math.floor((vh - 420) / 39);
+    return Math.max(7, Math.min(18, count)) || 10;
   })();
   const pageSize = Number(listState.supplierSize) || supplierOptimal;
   listState.supplierSize = pageSize;
@@ -780,19 +781,8 @@ async function suppliersListPage() {
     if (mats.length === 0) {
       matTagsHtml = `<span style="color:#94a3b8;font-size:11px">Chưa có NVL${projFilter ? ` (${esc(projFilter)})` : ''}</span>`;
     } else {
-      const displayMats = mats.slice(0, 2);
-      const remaining = mats.length - 2;
-      matTagsHtml = `
-        <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;white-space:nowrap">
-          <span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:700;font-size:11px;padding:1px 6px;white-space:nowrap">${mats.length} NVL${projFilter ? ` (${esc(projFilter)})` : ''}</span>
-          ${displayMats.map(m => `
-            <button type="button" class="link-button" data-open="${m.id}" style="font-size:10.5px;padding:1px 5px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;color:#1e40af;text-decoration:none;white-space:nowrap;font-family:monospace" title="${esc(m.data?.material_name || '')}">
-              ${esc(m.data?.material_code)}
-            </button>
-          `).join('')}
-          ${remaining > 0 ? `<span style="font-size:10px;color:#64748b;white-space:nowrap;cursor:help" title="${mats.slice(2).map(m=>m.data?.material_code).join(', ')}">+${remaining} khác</span>` : ''}
-        </div>
-      `;
+      const matTitle = mats.map(m => `${m.data?.material_code || ''} ${m.data?.material_name || ''}`.trim()).join('\n');
+      matTagsHtml = `<button type="button" class="supplier-material-count" data-supplier-filter="${esc(supName)}" title="${esc(matTitle)}"><b>${mats.length}</b><span>NVL đang cấp</span></button>`;
     }
 
     const declWithFile = decls.find(dc => dc.files && dc.files.length > 0);
@@ -808,15 +798,15 @@ async function suppliersListPage() {
 
     return `
       <tr>
-        <td>
+        <td class="supplier-material-count-cell">
           <div>
             <button class="link-button" data-open="${r.id}" style="font-weight:700;font-size:12.5px;color:#0f172a">${esc(supName)}</button>
             <div style="font-size:11px;color:#64748b;margin-top:1px">${esc(d.contact || '')} ${d.phone ? `· ${esc(d.phone)}` : ''}</div>
           </div>
         </td>
-        <td>${matTagsHtml}</td>
-        <td>${badge(status)}</td>
-        <td><span style="font-size:11.5px;font-weight:600;color:#334155">${esc(grade)}</span></td>
+        <td class="supplier-material-count-cell">${matTagsHtml}</td>
+        <td class="supplier-status-cell">${badge(status)}</td>
+        <td class="supplier-grade-cell"><span style="font-size:11.5px;font-weight:600;color:#334155">${esc(grade)}</span></td>
         <td style="font-size:11.5px">${dateText(lastDate)}</td>
         <td>
           <div style="display:flex;flex-direction:column;gap:2px">
@@ -824,8 +814,8 @@ async function suppliersListPage() {
             ${scheduleBadge}
           </div>
         </td>
-        <td>${declLinkHtml}</td>
-        <td>
+        <td class="supplier-decl-cell">${declLinkHtml}</td>
+        <td class="supplier-action-cell">
           <div style="display:flex;align-items:center;gap:6px">
             <button class="link-button" data-open="${r.id}" style="font-size:11.5px">👁️ Chi tiết</button>
             <button type="button" class="link-button evaluate-supplier-btn" data-supplier-id="${r.id}" style="font-size:11.5px;color:#2563eb;font-weight:600">✏️ Đánh giá</button>
@@ -862,12 +852,12 @@ async function suppliersListPage() {
           ${can('suppliers','Create')?`<button type="button" class="primary toolbar-btn" id="add-supplier-eval-btn" title="Thêm Nhà cung cấp mới" aria-label="Thêm Nhà cung cấp mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}
         </div>
       </form>
-      <div class="table-scroll">
-        <table>
+      <div class="table-scroll suppliers-table-scroll">
+        <table class="suppliers-table">
           <thead>
             <tr>
               <th><button class="link-button" data-sort="supplier">Nhà cung cấp ${listState.sort==='supplier'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
-              <th style="min-width:210px">Danh sách NVL đang cấp</th>
+              <th>Số lượng NVL đang cấp</th>
               <th><button class="link-button" data-sort="evaluation_status">Tình trạng đánh giá ${listState.sort==='evaluation_status'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
               <th><button class="link-button" data-sort="audit_grade">Xếp loại / Grade ${listState.sort==='audit_grade'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
               <th><button class="link-button" data-sort="last_audit_date">Ngày đánh giá ${listState.sort==='last_audit_date'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
@@ -1297,6 +1287,9 @@ async function listPage(module){
   if(module==='suppliers') {
     return await suppliersListPage();
   }
+  if(module==='test-plan') {
+    return await finishedGoodsTestPlanPage();
+  }
   if(module==='bom') {
     const params = {module: 'bom', size: 1000};
     if(listState.q) params.q = listState.q;
@@ -1351,6 +1344,203 @@ async function listPage(module){
     </div>
   ` : '';
   return head(config.title,'')+reportsQuickFilter+`<section class="card fill-card"><form class="toolbar" id="filters"><input type="search" name="q" placeholder="Tìm mã, tên, NCC, CAS…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasProject ? `<select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án"><option value="">Tất cả dự án</option><option value="Co-mold" ${listState.project==='Co-mold'?'selected':''}>Co-molded / Co-mold</option><option value="SE Jump" ${listState.project==='SE Jump'?'selected':''}>SE Jump</option><option value="CALDERA" ${listState.project==='CALDERA'?'selected':''}>CALDERA, SIERRA 8</option></select><select name="category" id="category-filter" title="Lọc theo Category" aria-label="Category"><option value="">Tất cả Category</option><option value="Raw material" ${listState.category==='Raw material'?'selected':''}>Raw material</option><option value="Packing material" ${listState.category==='Packing material'?'selected':''}>Packing material</option></select>` : ''}${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${hasDate ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
+}
+
+async function finishedGoodsTestPlanPage() {
+  const result = await api('/records?module=test-plan&size=2000');
+  const items = result.items || [];
+  
+  const now = new Date();
+  
+  let passCount = 0;
+  let pendingCount = 0;
+  let dueSoonCount = 0;
+  let ngCount = 0;
+  
+  items.forEach(m => {
+    const d = m.data || {};
+    const res = (d.report_result || 'Pending').toLowerCase();
+    
+    if (res === 'pass') passCount++;
+    else if (res === 'fail' || res === 'ng') ngCount++;
+    else {
+      pendingCount++;
+      if (d.report_deadline) {
+        const exp = new Date(d.report_deadline);
+        const remainingDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
+        if (remainingDays >= 0 && remainingDays <= 14) dueSoonCount++;
+        if (remainingDays < 0) {
+            ngCount++;
+            pendingCount--;
+        }
+      }
+    }
+  });
+
+  let filtered = items;
+  const q = (listState.q || '').trim().toLowerCase();
+  const stFilter = listState.status || '';
+
+  if (q) {
+    filtered = filtered.filter(m => {
+      const d = m.data || {};
+      const name = (d.material_name || '').toLowerCase();
+      const code = (d.material_code || '').toLowerCase();
+      const type = (d.test_type || '').toLowerCase();
+      return name.includes(q) || code.includes(q) || type.includes(q);
+    });
+  }
+
+  if (stFilter) {
+    if (stFilter === 'Pass') {
+      filtered = filtered.filter(m => (m.data?.report_result || '').toLowerCase() === 'pass');
+    } else if (stFilter === 'Pending') {
+      filtered = filtered.filter(m => {
+          const res = (m.data?.report_result || 'Pending').toLowerCase();
+          if(res !== 'pass' && res !== 'fail' && res !== 'ng') {
+              if (m.data?.report_deadline) {
+                  const exp = new Date(m.data.report_deadline);
+                  const rem = Math.ceil((exp - now) / 86400000);
+                  if (rem < 0) return false;
+              }
+              return true;
+          }
+          return false;
+      });
+    } else if (stFilter === 'DueSoon') {
+      filtered = filtered.filter(m => {
+          const res = (m.data?.report_result || 'Pending').toLowerCase();
+          if(res !== 'pass' && res !== 'fail' && res !== 'ng' && m.data?.report_deadline) {
+              const exp = new Date(m.data.report_deadline);
+              const rem = Math.ceil((exp - now) / 86400000);
+              return rem >= 0 && rem <= 14;
+          }
+          return false;
+      });
+    } else if (stFilter === 'NG') {
+      filtered = filtered.filter(m => {
+          const res = (m.data?.report_result || '').toLowerCase();
+          if(res === 'fail' || res === 'ng') return true;
+          if(res !== 'pass' && m.data?.report_deadline) {
+              const exp = new Date(m.data.report_deadline);
+              const rem = Math.ceil((exp - now) / 86400000);
+              return rem < 0;
+          }
+          return false;
+      });
+    }
+  }
+
+  const matOptimal = (function() {
+    const vh = window.innerHeight || 900;
+    const count = Math.floor((vh - 250) / 42.5);
+    return Math.max(8, Math.min(30, count)) || 13;
+  })();
+  const pageSize = Number(listState.size) || matOptimal;
+  
+  listState.size = pageSize;
+  const page = listState.page || 1;
+  const total = filtered.length;
+  const pagedItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pagination = paginationHtml(page, total, pageSize);
+
+  const kpiCardsHtml = `
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.02);cursor:pointer" data-status-filter="">
+        <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase">Tổng số báo cáo</div>
+        <div style="font-size:22px;font-weight:700;color:#0f172a;margin-top:2px">${items.length}</div>
+        <small style="color:#64748b;font-size:10.5px">Kế hoạch test thành phẩm</small>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Pass">
+        <div style="font-size:11px;font-weight:600;color:#15803d;text-transform:uppercase">Đạt / Pass</div>
+        <div style="font-size:22px;font-weight:700;color:#16a34a;margin-top:2px">${passCount}</div>
+        <small style="color:#15803d;font-size:10.5px">Hoàn thành & kết quả Pass</small>
+      </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Pending">
+        <div style="font-size:11px;font-weight:600;color:#b45309;text-transform:uppercase">Đang xử lý / Pending</div>
+        <div style="font-size:22px;font-weight:700;color:#d97706;margin-top:2px">${pendingCount}</div>
+        <small style="color:#b45309;font-size:10.5px">Chưa có kết quả báo cáo</small>
+      </div>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="DueSoon">
+        <div style="font-size:11px;font-weight:600;color:#1e40af;text-transform:uppercase">Gần đến hạn (≤ 14 ngày)</div>
+        <div style="font-size:22px;font-weight:700;color:#2563eb;margin-top:2px">${dueSoonCount}</div>
+        <small style="color:#1e40af;font-size:10.5px">Cần đôn đốc kết quả</small>
+      </div>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="NG">
+        <div style="font-size:11px;font-weight:600;color:#b91c1c;text-transform:uppercase">Quá hạn / NG / Fail</div>
+        <div style="font-size:22px;font-weight:700;color:#dc2626;margin-top:2px">${ngCount}</div>
+        <small style="color:#b91c1c;font-size:10.5px">Không đạt hoặc trễ hạn</small>
+      </div>
+    </div>
+  `;
+
+  const rowsHtml = pagedItems.map(m => {
+    const d = m.data || {};
+    const name = d.material_name || '—';
+    const code = d.material_code || '—';
+    const type = d.test_type || '—';
+    const test = d.test || '—';
+    const cat = d.category || '—';
+    const deadline = d.report_deadline ? new Date(d.report_deadline).toLocaleDateString('vi-VN') : '—';
+    const res = d.report_result || 'Pending';
+    
+    let resBadge = '';
+    if (res.toLowerCase() === 'pass') resBadge = '<span style="color:#15803d;background:#dcfce7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">PASS</span>';
+    else if (res.toLowerCase() === 'fail' || res.toLowerCase() === 'ng') resBadge = '<span style="color:#b91c1c;background:#fee2e2;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">' + esc(res) + '</span>';
+    else resBadge = '<span style="color:#b45309;background:#fef3c7;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">' + esc(res) + '</span>';
+
+    return `<tr>
+      <td>
+        <div style="font-weight:600;color:#0f172a"><button class="link-button" data-open="${m.id}">${esc(name)}</button></div>
+        <div style="font-size:10.5px;color:#64748b;margin-top:2px">${esc(code)}</div>
+      </td>
+      <td>
+        <div style="font-size:12px;color:#1e293b">${esc(type)}</div>
+        <div style="font-size:10px;color:#64748b;margin-top:2px">${esc(test)}</div>
+      </td>
+      <td>${esc(cat)}</td>
+      <td><span style="color:#475569;font-size:12px">${deadline}</span></td>
+      <td>${resBadge}</td>
+      <td>
+        <button type="button" class="link-button edit-material-btn" data-open="${m.id}" style="font-size:11.5px;color:#2563eb;font-weight:600" title="Chỉnh sửa chi tiết báo cáo">👁️ Chi tiết</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<section class="card fill-card">
+    ${kpiCardsHtml}
+    <form class="toolbar" id="filters" data-module="test-plan" style="margin-bottom:0">
+      <input type="search" name="q" placeholder="Tìm tên thành phẩm, mã, loại test..." value="${esc(listState.q)}" aria-label="Tìm trong bảng" style="width:250px">
+      <select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">
+        ${[...new Set([matOptimal, 10, 15, 20, 25, 50, 2000])].sort((a,b)=>a-b).map(v => `<option value="${v}" ${pageSize===v?'selected':''}>${v===2000? `Tất cả (${total})` : `${v} / trang`}</option>`).join('')}
+      </select>
+      <div class="toolbar-actions-group">
+        <button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
+        <button type="button" id="reset-filter" class="toolbar-btn" title="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+      </div>
+      <div class="toolbar-actions-right">
+        ${can('test-plan','Create')? `<button type="button" class="primary toolbar-btn" id="add-record" data-module="test-plan" title="Thêm kế hoạch mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>` : ''}
+      </div>
+    </form>
+    <div class="table-scroll" style="margin-top:-1px">
+      <table>
+        <thead>
+          <tr>
+            <th>Tên Thành phẩm / Mã TP</th>
+            <th>Loại test</th>
+            <th>Category</th>
+            <th>Thời hạn báo cáo</th>
+            <th>Kết quả</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml || `<tr><td colspan="6" class="empty-state">${empty('Chưa có kế hoạch nào','').replace('<div class="empty-state">','').replace('</div>','')}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+    ${pagination}
+  </section>`;
 }
 
 
@@ -2462,11 +2652,11 @@ if(id==='dashboard'){
   $('#dashboard-element').onchange=e=>{dashboardElement=e.target.value;return render();};
   content.querySelectorAll('[data-report-validity]').forEach(b=>b.onclick=()=>dashboardReportList(b.dataset.reportValidity).catch(e=>notify(e.message)));
   content.querySelectorAll('[data-report-days]').forEach(b=>b.onclick=()=>dashboardReportList('',Number(b.dataset.reportDays)).catch(e=>notify(e.message)));
-  content.querySelectorAll('[data-trend-stage]').forEach(b=>b.onclick=()=>{location.hash='/xrf-trend/'+b.dataset.trendStage;});
+  content.querySelectorAll('[data-trend-stage]').forEach(b=>b.onclick=()=>{location.hash='#/xrf-trend/'+b.dataset.trendStage;});
   $('#dashboard-alerts').onclick=()=>{openModal('Việc cần xử lý',rowTable(overview.alerts));modal.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{modal.close();goto('record/'+b.dataset.open);});};
 }
 const gs = document.querySelector('.global-search'); if(gs) gs.style.display = id === 'cts-1' ? 'none' : '';
-if(catalog.modules[id] || id==='bom' || id==='xrf'){
+if(catalog.modules[id] || id==='bom' || id==='xrf' || id==='inspection-plans'){
   const module = $('#filters')?.dataset?.module || $('#export')?.dataset?.module || id;
   if($('#filters')) $('#filters').onsubmit=e=>{e.preventDefault();Object.assign(listState,Object.fromEntries(new FormData(e.target)),{page:1});render();};
   if($('#page-size-select')) $('#page-size-select').onchange=e=>{
@@ -2474,6 +2664,7 @@ if(catalog.modules[id] || id==='bom' || id==='xrf'){
     listState.size = val;
     if(module==='suppliers'||id==='suppliers') listState.supplierSize = val;
     if(module==='materials'||id==='materials') listState.materialSize = val;
+    if(module==='test-plan'||id==='test-plan'||id==='inspection-plans') listState.planSize = val;
     listState.page = 1;
     render();
   };
@@ -2491,6 +2682,12 @@ if(catalog.modules[id] || id==='bom' || id==='xrf'){
   $('#add-record')?.addEventListener('click',()=>module==='suppliers'?openSupplierEvaluationModal():module==='materials'?openMaterialEditModal():recordForm(module));
   if($('#export')) $('#export').onclick=()=>{const q=new URLSearchParams({q:listState.q,status:listState.status,start:listState.start,end:listState.end});location.href='/api/export/'+module+'?'+q;};
   if(id==='suppliers'||module==='suppliers'){
+    content.querySelectorAll('[data-supplier-filter]').forEach(b=>{
+      b.onclick=()=>{
+        pendingMaterialSupplierFilter = b.dataset.supplierFilter || '';
+        goto('materials');
+      };
+    });
     content.querySelectorAll('.evaluate-supplier-btn').forEach(b=>{
       b.onclick=()=>{
         const sid=Number(b.dataset.supplierId);
@@ -2798,11 +2995,7 @@ async function productBomPage(key) {
 }
 
 async function planningPage(){
-  const pageSize = Number(listState.size) || getOptimalPageSize();
-  const data=await api('/inspections/inspection-plans?size='+pageSize+'&page='+listState.page);
-  const pagination = paginationHtml(data.page, data.total, pageSize, 'data-plan-page', 'plan-prev', 'plan-next');
-  const planOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${data.total} mục)`:`${v} / trang`}</option>`).join('');
-  return head('Kế hoạch kiểm nghiệm','')+`<div class="tabs">${['test-plan','xrf-plan','cts-1','cts-2','cts-3'].filter(m=>can(m,'View')).map(m=>`<button data-route="${m}">${esc(title(m))}</button>`).join('')}</div><section class="card"><div class="toolbar"><label style="margin:0;display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted)">Hiển thị:<select id="page-size-select" style="padding:4px 8px;font-size:11px;border-radius:4px;border:1px solid var(--line);background:#fff">${planOptHtml}</select></label></div>${rowTable(data.items,['name','module','status'])}${pagination}</section>`;
+  return await finishedGoodsTestPlanPage();
 }
 
 async function xrfStandardPage(){
@@ -2876,6 +3069,7 @@ async function xrfStandardPage(){
   return html;
 }
 
+
 async function render() {
   const ticket=++requestId;
   const path=(location.hash || '#/dashboard').replace(/^#\//,'');
@@ -2883,6 +3077,10 @@ async function render() {
   if(currentModule!==route){
     currentModule=route;
     listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||getOptimalPageSize()};
+    if(route==='materials' && pendingMaterialSupplierFilter){
+      listState.q = pendingMaterialSupplierFilter;
+      pendingMaterialSupplierFilter = '';
+    }
     window.listState = listState;
   }
   content.classList.toggle('quality-dashboard-page',route==='dashboard');
@@ -2922,6 +3120,7 @@ async function render() {
     else if(route==='imports')html=await importsPage();
     else if(route==='inspection-plans')html=await planningPage();
     else if(route==='xrf-standard')html=await xrfStandardPage();
+    else if(route==='test-plan') html=await finishedGoodsTestPlanPage();
     else if(catalog.modules[route])html=await listPage(route);
     else html=empty('Không tìm thấy trang','Đường dẫn không hợp lệ. Chọn một mục trong menu.');
     if(ticket!==requestId)return;
@@ -2992,3 +3191,4 @@ window.addEventListener('hashchange', render);
     }
   }
 })();
+
