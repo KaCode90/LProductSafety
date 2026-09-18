@@ -5,7 +5,7 @@ from datetime import datetime
 Base = declarative_base()
 
 class User(Base):
-    __tablename__ = 'users'
+    __tablename__ = 'ps_users'
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(50), unique=True, index=True, nullable=False)
     password = Column(String(255), nullable=False) # In real app, this should be hashed
@@ -13,7 +13,7 @@ class User(Base):
     avatar_url = Column(String(255), default='/static/default_avatar.svg')
 
 class Material(Base):
-    __tablename__ = 'materials'
+    __tablename__ = 'ps_materials'
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(50), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=False)
@@ -30,9 +30,9 @@ class Material(Base):
     compliance_records = relationship("ComplianceRecord", back_populates="material", cascade="all, delete")
 
 class ComplianceRecord(Base):
-    __tablename__ = 'compliance_records'
+    __tablename__ = 'ps_compliance_records'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    material_id = Column(Integer, ForeignKey('materials.id'), nullable=False)
+    material_id = Column(Integer, ForeignKey('ps_materials.id'), nullable=False)
     report_type = Column(String(100))
     report_id = Column(String(100))
     lab = Column(String(255))
@@ -44,7 +44,7 @@ class ComplianceRecord(Base):
     material = relationship("Material", back_populates="compliance_records")
 
 class FMDRecord(Base):
-    __tablename__ = 'fmd_records'
+    __tablename__ = 'ps_fmd_records'
     id = Column(Integer, primary_key=True, autoincrement=True)
     material_code = Column(String(50))
     cas_no = Column(String(50))
@@ -54,7 +54,7 @@ class FMDRecord(Base):
     status = Column(String(50))
 
 class TRMRecord(Base):
-    __tablename__ = 'trm_records'
+    __tablename__ = 'ps_trm_records'
     id = Column(Integer, primary_key=True, autoincrement=True)
     material_code = Column(String(50))
     kind_of_test = Column(String(100))
@@ -63,7 +63,7 @@ class TRMRecord(Base):
     status = Column(String(50))
 
 class XRFRecord(Base):
-    __tablename__ = 'xrf_records'
+    __tablename__ = 'ps_xrf_records'
     id = Column(Integer, primary_key=True, autoincrement=True)
     part_code = Column(String(50))
     lot_no = Column(String(50))
@@ -76,7 +76,7 @@ class XRFRecord(Base):
     status = Column(String(50))
 
 class CAPA(Base):
-    __tablename__ = 'capas'
+    __tablename__ = 'ps_capas'
     id = Column(String(50), primary_key=True)
     ncr_rel = Column(String(50))
     issue = Column(Text)
