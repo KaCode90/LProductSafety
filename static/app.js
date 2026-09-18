@@ -9,6 +9,7 @@ function getOptimalPageSize(){
   return 25;
 }
 let loginAt,user,csrf,catalog,overview,requestId=0,currentModule='',listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:getOptimalPageSize()},toastTimer;
+window.listState = listState;
 let currentDetail=null;
 const icons={dashboard:'◫',compliance:'◇',xrf:'◉',materials:'▣',management:'♙',documents:'▤',settings:'⚙'};
 const names={'inspection-plans':'Kế hoạch kiểm nghiệm',imports:'Nguồn Excel & đối chiếu','xrf-trend':'Xu hướng XRF & thực hiện kế hoạch',users:'Quản lý người dùng',roles:'Vai trò & Phân quyền',notifications:'Cài đặt thông báo',retention:'Quy định lưu trữ',system:'Cấu hình hệ thống'};
@@ -53,9 +54,11 @@ function goto(route){if(location.hash==='#/'+route)render();else location.hash='
 function title(id){return catalog.modules[id]?.title||names[id]||'Product Safety';}
 function can(module,action){return !!catalog.permissions[module]?.[action];}
 function openModal(name,body,footer=''){
+  modal.style.maxWidth = '';
+  modal.style.width = '';
   modal.innerHTML=`<div class="dialog-head"><h2 id="modal-title">${esc(name)}</h2><button data-close aria-label="Đóng">×</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}`;
   if(!modal.open)modal.showModal();
-  modal.querySelector('[data-close]').onclick=()=>modal.close();
+  modal.querySelector('[data-close]').onclick=()=>{ modal.close(); modal.style.maxWidth=''; modal.style.width=''; };
 }
 function confirmAction(text,action){
   openModal('Xác nhận',`<p>${esc(text)}</p>`,`<button id="cancel-confirm">Hủy</button><button id="accept-confirm" class="danger">Đồng ý</button>`);
@@ -97,7 +100,8 @@ function paginationHtml(currentPage, totalItems, pageSize, attrName='data-page',
 const columnPreferences = {
   materials: ['material_code', 'material_name', 'category', 'supplier', 'project'],
   bom: ['project', 'parent_code', 'material_code', 'material_name', 'supplier'],
-  suppliers: ['supplier', 'manufacturer', 'contact', 'email', 'phone'],
+  suppliers: ['supplier', 'evaluation_status', 'audit_grade', 'last_audit_date', 'next_audit_date', 'contact'],
+  'test-types': ['name', 'standard', 'description', 'default_selected'],
   'test-plan': ['project', 'material_code', 'material_name', 'test_type', 'test'],
   'xrf-plan': ['project', 'material_code', 'material_name', 'supplier', 'test'],
   'xrf-iqc': ['material_code', 'lot', 'test_date', 'material_type', 'pb'],
@@ -347,7 +351,952 @@ async function dashboardReportList(validity='',days=null,page=1){
   $('#report-next').onclick=()=>dashboardReportList(validity,days,data.page+1).catch(e=>notify(e.message));
 }
 
+async function openSupplierEvaluationModal(row = null) {
+  const isEdit = !!row;
+  const d = row?.data || {};
+  const currentStatus = d.evaluation_status || 'Approved';
+  const currentGrade = d.audit_grade || 'Hạng B (Đạt)';
+  const lastAudit = d.last_audit_date || new Date().toISOString().slice(0, 10);
+
+  let nextAudit = d.next_audit_date;
+  if (!nextAudit && lastAudit) {
+    const nextDateObj = new Date(lastAudit);
+    nextDateObj.setFullYear(nextDateObj.getFullYear() + 1);
+    nextAudit = nextDateObj.toISOString().slice(0, 10);
+  }
+
+  const modalHtml = `
+    <form id="supplier-eval-form" style="display:flex;flex-direction:column;gap:12px">
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px">
+        <div style="font-size:12.5px;font-weight:700;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span>🏢 Thông tin Nhà cung cấp</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+          <label style="margin:0;font-size:11px;color:#475569">
+            Tên Nhà cung cấp *
+            <input type="text" name="supplier" id="eval-supplier-name" value="${esc(d.supplier || '')}" required style="margin-top:4px;font-weight:650">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Người liên hệ
+            <input type="text" name="contact" value="${esc(d.contact || '')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Email liên hệ
+            <input type="email" name="email" value="${esc(d.email || '')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Điện thoại
+            <input type="text" name="phone" value="${esc(d.phone || '')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;grid-column:span 2;font-size:11px;color:#475569">
+            Địa chỉ
+            <input type="text" name="address" value="${esc(d.address || '')}" style="margin-top:4px">
+          </label>
+        </div>
+      </div>
+
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px">
+        <div style="font-size:12.5px;font-weight:700;color:#1e40af;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span>📋 Đánh giá định kỳ & Lịch Audit (Audit Schedule)</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+          <label style="margin:0;font-size:11px;color:#1e40af;font-weight:600">
+            Tình trạng đánh giá định kỳ *
+            <select name="evaluation_status" id="eval-status-select" style="margin-top:4px;font-weight:650">
+              <option value="Approved" ${currentStatus==='Approved'?'selected':''}>✓ Approved (Đạt chuẩn - Ưu tiên sử dụng)</option>
+              <option value="Qualified" ${currentStatus==='Qualified'?'selected':''}>ℹ️ Qualified (Đủ điều kiện)</option>
+              <option value="Conditional" ${currentStatus==='Conditional'?'selected':''}>⚠️ Conditional (Có điều kiện - Cần cải tiến)</option>
+              <option value="Pending" ${currentStatus==='Pending'?'selected':''}>⏳ Pending (Chờ đánh giá)</option>
+              <option value="Blacklist" ${currentStatus==='Blacklist'?'selected':''}>🚫 Blacklist (Đình chỉ cung ứng)</option>
+            </select>
+          </label>
+          <label style="margin:0;font-size:11px;color:#1e40af;font-weight:600">
+            Xếp loại / Grade
+            <select name="audit_grade" id="eval-grade-select" style="margin-top:4px;font-weight:650">
+              <option value="Hạng A (Xuất sắc)" ${currentGrade==='Hạng A (Xuất sắc)'?'selected':''}>Hạng A (Xuất sắc · ≥90 điểm)</option>
+              <option value="Hạng B (Đạt)" ${currentGrade==='Hạng B (Đạt)'?'selected':''}>Hạng B (Đạt · 75 - 89 điểm)</option>
+              <option value="Hạng C (Cần cải tiến)" ${currentGrade==='Hạng C (Cần cải tiến)'?'selected':''}>Hạng C (Cần cải tiến · 60 - 74 điểm)</option>
+              <option value="Hạng D (Không đạt)" ${currentGrade==='Hạng D (Không đạt)'?'selected':''}>Hạng D (Không đạt · &lt;60 điểm)</option>
+            </select>
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Ngày đánh giá gần nhất
+            <input type="date" name="last_audit_date" id="eval-last-date" value="${esc(lastAudit || '')}" style="margin-top:4px">
+          </label>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <label style="margin:0;font-size:11px;color:#475569">Hạn đánh giá tiếp theo *</label>
+              <div style="display:flex;gap:4px">
+                <button type="button" class="quick-audit-calc" data-months="6" style="padding:1px 5px;font-size:10px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;cursor:pointer">+6 tháng</button>
+                <button type="button" class="quick-audit-calc" data-months="12" style="padding:1px 5px;font-size:10px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;cursor:pointer">+1 năm</button>
+                <button type="button" class="quick-audit-calc" data-months="24" style="padding:1px 5px;font-size:10px;background:#fff;border:1px solid #cbd5e1;border-radius:3px;cursor:pointer">+2 năm</button>
+              </div>
+            </div>
+            <input type="date" name="next_audit_date" id="eval-next-date" value="${esc(nextAudit || '')}" required style="margin-top:4px;width:100%">
+          </div>
+          <label style="margin:0;grid-column:span 2;font-size:11px;color:#475569">
+            Ghi chú / Nhận xét đánh giá định kỳ
+            <textarea name="evaluation_notes" rows="3" style="margin-top:4px" placeholder="Nhận xét chất lượng, điểm mạnh, rủi ro HSF, hành động cải tiến cần theo dõi...">${esc(d.evaluation_notes || '')}</textarea>
+          </label>
+        </div>
+      </div>
+
+      <div style="background:#f8fafc;border:1px dashed #cbd5e1;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <div>
+          <span style="font-weight:650;color:#0f172a;font-size:12px;display:flex;align-items:center;gap:5px">
+            📎 Tải lên Biên bản đánh giá / Audit Report / Chứng nhận ISO (PDF)
+          </span>
+          <div id="supplier-evidence-label" style="font-size:11px;color:#64748b;margin-top:2px">
+            Chưa chọn tệp đính kèm mới (tùy chọn)
+          </div>
+        </div>
+        <div>
+          <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:4px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:600;margin:0">
+            <input type="file" id="supplier-evidence-file" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx" style="display:none">
+            <span>📎 Chọn file đính kèm</span>
+          </label>
+        </div>
+      </div>
+
+      <div id="eval-modal-error" style="color:#ef4444;font-size:11.5px;font-weight:600"></div>
+    </form>
+  `;
+
+  openModal(
+    isEdit ? `Đánh giá định kỳ: ${d.supplier || 'Nhà cung cấp'}` : 'Thêm Nhà cung cấp mới',
+    modalHtml,
+    `
+      <button data-close>Hủy</button>
+      <button type="button" class="primary" id="save-supplier-eval-btn">💾 Lưu kết quả đánh giá</button>
+    `
+  );
+
+  modal.querySelectorAll('.quick-audit-calc').forEach(btn => {
+    btn.onclick = () => {
+      const months = Number(btn.dataset.months);
+      const lastInput = modal.querySelector('#eval-last-date').value;
+      const baseDate = lastInput ? new Date(lastInput) : new Date();
+      baseDate.setMonth(baseDate.getMonth() + months);
+      modal.querySelector('#eval-next-date').value = baseDate.toISOString().slice(0, 10);
+    };
+  });
+
+  const fileInput = modal.querySelector('#supplier-evidence-file');
+  const fileLbl = modal.querySelector('#supplier-evidence-label');
+  if (fileInput) {
+    fileInput.onchange = () => {
+      if (fileInput.files[0]) {
+        const f = fileInput.files[0];
+        fileLbl.innerHTML = `<span style="color:#16a34a;font-weight:600">✓ Đã chọn: ${esc(f.name)} (${(f.size/1024).toFixed(1)} KB)</span>`;
+      }
+    };
+  }
+
+  const saveBtn = modal.querySelector('#save-supplier-eval-btn');
+  if (saveBtn) {
+    saveBtn.onclick = async () => {
+      const form = modal.querySelector('#supplier-eval-form');
+      const supName = form.supplier.value.trim();
+      const errBox = modal.querySelector('#eval-modal-error');
+      if (!supName) {
+        errBox.textContent = 'Vui lòng nhập tên Nhà cung cấp.';
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Đang lưu...';
+
+      try {
+        const formData = new FormData(form);
+        const dataObj = Object.fromEntries(formData.entries());
+        dataObj.status = 'Pending';
+
+        let targetId = row?.id;
+        if (isEdit) {
+          const updated = { ...row.data, ...dataObj };
+          await api('/records/' + row.id, {
+            method: 'PUT',
+            body: JSON.stringify({ module: 'suppliers', data: updated, version: row.version })
+          });
+        } else {
+          const created = await api('/records', {
+            method: 'POST',
+            body: JSON.stringify({ module: 'suppliers', data: dataObj })
+          });
+          targetId = created.id;
+        }
+
+        if (fileInput && fileInput.files && fileInput.files[0] && targetId) {
+          const body = new FormData();
+          body.append('file', fileInput.files[0]);
+          await api('/records/' + targetId + '/evidence', { method: 'POST', body });
+        }
+
+        modal.close();
+        notify(`Đã lưu hồ sơ đánh giá nhà cung cấp "${supName}" thành công!`);
+        render();
+      } catch (err) {
+        errBox.textContent = err.message;
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = '💾 Lưu kết quả đánh giá';
+        }
+      }
+    };
+  }
+}
+
+async function suppliersListPage() {
+  const [suppliersRes, materialsRes, declRes, matDeclRes, bomRes] = await Promise.all([
+    api('/records?module=suppliers&size=2000'),
+    api('/records?module=materials&size=2000'),
+    api('/records?module=declarations&size=2000'),
+    api('/records?module=material-declarations&size=2000'),
+    api('/records?module=bom&size=2000')
+  ]);
+
+  const allSuppliers = suppliersRes.items || [];
+  const allMaterials = materialsRes.items || [];
+  const allDeclarations = [...(declRes.items || []), ...(matDeclRes.items || [])];
+  const allBom = bomRes.items || [];
+
+  const bomProjects = [...new Set(allBom.map(b => b.data?.project).filter(Boolean))].sort();
+
+  // Mapping project -> materials and project -> suppliers
+  const bomProjMats = {};
+  const bomProjSups = {};
+  allBom.forEach(b => {
+    const p = b.data?.project;
+    const mc = b.data?.material_code;
+    const s = (b.data?.supplier || '').trim().toUpperCase();
+    if (p) {
+      if (!bomProjMats[p]) bomProjMats[p] = new Set();
+      if (!bomProjSups[p]) bomProjSups[p] = new Set();
+      if (mc) bomProjMats[p].add(mc);
+      if (s) bomProjSups[p].add(s);
+    }
+  });
+
+  window.psSuppliersMap = Object.fromEntries(allSuppliers.map(s => [s.id, s]));
+
+  // Map supplier -> materials
+  const supMatMap = {};
+  allMaterials.forEach(m => {
+    const s = (m.data?.supplier || '').trim();
+    if (s) {
+      if (!supMatMap[s]) supMatMap[s] = [];
+      supMatMap[s].push(m);
+    }
+  });
+
+  // Map supplier -> declarations
+  const supDeclMap = {};
+  allDeclarations.forEach(d => {
+    const s = (d.data?.supplier || '').trim();
+    if (s) {
+      if (!supDeclMap[s]) supDeclMap[s] = [];
+      supDeclMap[s].push(d);
+    }
+  });
+
+  // Project filtering
+  const projFilter = listState.project || '';
+  let projectScopedSuppliers = allSuppliers;
+  if (projFilter) {
+    projectScopedSuppliers = allSuppliers.filter(s => {
+      const d = s.data || {};
+      const supName = (d.supplier || '').trim().toUpperCase();
+      if (bomProjSups[projFilter] && bomProjSups[projFilter].has(supName)) return true;
+      const mats = supMatMap[d.supplier] || [];
+      return mats.some(m => {
+        const mc = m.data?.material_code;
+        const mp = m.data?.project;
+        return mp === projFilter || (bomProjMats[projFilter] && bomProjMats[projFilter].has(mc));
+      });
+    });
+  }
+
+  const now = new Date();
+  let approvedCount = 0, qualifiedCount = 0, conditionalCount = 0, blacklistCount = 0, pendingCount = 0, auditDueCount = 0;
+
+  projectScopedSuppliers.forEach(s => {
+    const st = s.data?.evaluation_status || 'Pending';
+    if (st === 'Approved') approvedCount++;
+    else if (st === 'Qualified') qualifiedCount++;
+    else if (st === 'Conditional') conditionalCount++;
+    else if (st === 'Blacklist') blacklistCount++;
+    else pendingCount++;
+
+    const nextDate = s.data?.next_audit_date;
+    if (nextDate) {
+      const days = Math.ceil((new Date(nextDate) - now) / (1000 * 60 * 60 * 24));
+      if (days <= 60) auditDueCount++;
+    } else {
+      auditDueCount++;
+    }
+  });
+
+  // Filtering
+  let filtered = projectScopedSuppliers;
+  const q = (listState.q || '').trim().toLowerCase();
+  const stFilter = listState.status || '';
+
+  if (q) {
+    filtered = filtered.filter(s => {
+      const d = s.data || {};
+      const supName = (d.supplier || '').toLowerCase();
+      const contact = (d.contact || '').toLowerCase();
+      const email = (d.email || '').toLowerCase();
+      const phone = (d.phone || '').toLowerCase();
+      const mats = (supMatMap[d.supplier] || []).map(m => (m.data?.material_code || '') + ' ' + (m.data?.material_name || '')).join(' ').toLowerCase();
+      return supName.includes(q) || contact.includes(q) || email.includes(q) || phone.includes(q) || mats.includes(q);
+    });
+  }
+
+  if (stFilter) {
+    if (stFilter === 'audit_due') {
+      filtered = filtered.filter(s => {
+        const nextDate = s.data?.next_audit_date;
+        if (!nextDate) return true;
+        const days = Math.ceil((new Date(nextDate) - now) / (1000 * 60 * 60 * 24));
+        return days <= 60;
+      });
+    } else {
+      filtered = filtered.filter(s => (s.data?.evaluation_status || 'Pending') === stFilter);
+    }
+  }
+
+  // Sorting
+  const sortKey = listState.sort || 'updated_at';
+  const sortDir = listState.direction || 'desc';
+  filtered.sort((a, b) => {
+    let valA, valB;
+    if (sortKey === 'supplier') {
+      valA = a.data?.supplier || '';
+      valB = b.data?.supplier || '';
+    } else if (sortKey === 'evaluation_status') {
+      valA = a.data?.evaluation_status || '';
+      valB = b.data?.evaluation_status || '';
+    } else if (sortKey === 'audit_grade') {
+      valA = a.data?.audit_grade || '';
+      valB = b.data?.audit_grade || '';
+    } else if (sortKey === 'last_audit_date') {
+      valA = a.data?.last_audit_date || '';
+      valB = b.data?.last_audit_date || '';
+    } else if (sortKey === 'next_audit_date') {
+      valA = a.data?.next_audit_date || '';
+      valB = b.data?.next_audit_date || '';
+    } else {
+      valA = a[sortKey] || a.data?.[sortKey] || '';
+      valB = b[sortKey] || b.data?.[sortKey] || '';
+    }
+    return sortDir === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
+  });
+
+  const supplierOptimal = (function() {
+    const vh = window.innerHeight || 900;
+    const count = Math.floor((vh - 350) / 42.5);
+    return Math.max(8, Math.min(30, count)) || 13;
+  })();
+  const pageSize = Number(listState.supplierSize) || supplierOptimal;
+  listState.supplierSize = pageSize;
+  listState.size = pageSize;
+  const page = listState.page || 1;
+  const total = filtered.length;
+  const pagedItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pagination = paginationHtml(page, total, pageSize);
+
+  const defaultSizes = [...new Set([pageSize, 10, 12, 13, 14, 16, 17, 20, 25, 2000])].sort((a, b) => a - b);
+  const sizeOptHtml = defaultSizes.map(v => `<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${total} NCC)`:`${v} / trang`}</option>`).join('');
+
+  const kpiCardsHtml = `
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.02);cursor:pointer" data-status-filter="">
+        <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase">Tổng số NCC</div>
+        <div style="font-size:22px;font-weight:700;color:#0f172a;margin-top:2px">${projectScopedSuppliers.length}</div>
+        <small style="color:#64748b;font-size:10.5px">${projFilter ? `Dự án: <b>${esc(projFilter)}</b>` : 'Đang quản lý trong hệ thống'}</small>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Approved">
+        <div style="font-size:11px;font-weight:600;color:#15803d;text-transform:uppercase">Đạt chuẩn (Approved)</div>
+        <div style="font-size:22px;font-weight:700;color:#16a34a;margin-top:2px">${approvedCount}</div>
+        <small style="color:#15803d;font-size:10.5px">Ưu tiên sử dụng sản xuất</small>
+      </div>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Qualified">
+        <div style="font-size:11px;font-weight:600;color:#1e40af;text-transform:uppercase">Đủ điều kiện (Qualified)</div>
+        <div style="font-size:22px;font-weight:700;color:#2563eb;margin-top:2px">${qualifiedCount}</div>
+        <small style="color:#1e40af;font-size:10.5px">Đạt yêu cầu kỹ thuật & QA</small>
+      </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="audit_due">
+        <div style="font-size:11px;font-weight:600;color:#b45309;text-transform:uppercase">Cần đánh giá (≤ 60 ngày)</div>
+        <div style="font-size:22px;font-weight:700;color:#d97706;margin-top:2px">${auditDueCount}</div>
+        <small style="color:#b45309;font-size:10.5px">Đến hạn audit định kỳ</small>
+      </div>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Blacklist">
+        <div style="font-size:11px;font-weight:600;color:#b91c1c;text-transform:uppercase">Đình chỉ (Blacklist)</div>
+        <div style="font-size:22px;font-weight:700;color:#dc2626;margin-top:2px">${blacklistCount}</div>
+        <small style="color:#b91c1c;font-size:10.5px">Chặn mua hàng & cấp NVL</small>
+      </div>
+    </div>
+  `;
+
+  const quickFilterHtml = `
+    <div style="display:flex;gap:6px;margin-bottom:10px;padding:0 2px;flex-wrap:wrap">
+      <button type="button" class="tab-pill ${!stFilter?'active':''}" data-status-filter="" style="border:none;background:${!stFilter?'#2563eb':'#e2e8f0'};color:${!stFilter?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${!stFilter?'600':'500'};cursor:pointer">Tất cả (${projectScopedSuppliers.length})</button>
+      <button type="button" class="tab-pill ${stFilter==='Approved'?'active':''}" data-status-filter="Approved" style="border:none;background:${stFilter==='Approved'?'#16a34a':'#e2e8f0'};color:${stFilter==='Approved'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Approved'?'600':'500'};cursor:pointer">✓ Approved (${approvedCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='Qualified'?'active':''}" data-status-filter="Qualified" style="border:none;background:${stFilter==='Qualified'?'#2563eb':'#e2e8f0'};color:${stFilter==='Qualified'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Qualified'?'600':'500'};cursor:pointer">ℹ️ Qualified (${qualifiedCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='Conditional'?'active':''}" data-status-filter="Conditional" style="border:none;background:${stFilter==='Conditional'?'#d97706':'#e2e8f0'};color:${stFilter==='Conditional'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Conditional'?'600':'500'};cursor:pointer">⚠️ Conditional (${conditionalCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='audit_due'?'active':''}" data-status-filter="audit_due" style="border:none;background:${stFilter==='audit_due'?'#e11d48':'#e2e8f0'};color:${stFilter==='audit_due'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='audit_due'?'600':'500'};cursor:pointer">⏰ Đến hạn đánh giá (${auditDueCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='Blacklist'?'active':''}" data-status-filter="Blacklist" style="border:none;background:${stFilter==='Blacklist'?'#dc2626':'#e2e8f0'};color:${stFilter==='Blacklist'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Blacklist'?'600':'500'};cursor:pointer">🚫 Blacklist (${blacklistCount})</button>
+    </div>
+  `;
+
+  const rowsHtml = pagedItems.map(r => {
+    const d = r.data || {};
+    const supName = d.supplier || label(r);
+    const allSupMats = supMatMap[supName] || [];
+    const mats = projFilter
+      ? allSupMats.filter(m => m.data?.project === projFilter || (bomProjMats[projFilter] && bomProjMats[projFilter].has(m.data?.material_code)))
+      : allSupMats;
+    const decls = supDeclMap[supName] || [];
+    const status = d.evaluation_status || 'Pending';
+    const grade = d.audit_grade || '—';
+    const lastDate = d.last_audit_date;
+    const nextDate = d.next_audit_date;
+
+    let scheduleBadge = '<span style="color:#94a3b8;font-size:11px">—</span>';
+    if (nextDate) {
+      const days = Math.ceil((new Date(nextDate) - now) / (1000 * 60 * 60 * 24));
+      if (days < 0) {
+        scheduleBadge = `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-size:10.5px">✕ Quá hạn ${Math.abs(days)} ngày</span>`;
+      } else if (days <= 60) {
+        scheduleBadge = `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:10.5px">⚠️ Sắp đến hạn (${days} ngày)</span>`;
+      } else {
+        scheduleBadge = `<span class="badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;font-size:10.5px">✓ Còn ${days} ngày</span>`;
+      }
+    }
+
+    let matTagsHtml = '';
+    if (mats.length === 0) {
+      matTagsHtml = `<span style="color:#94a3b8;font-size:11px">Chưa có NVL${projFilter ? ` (${esc(projFilter)})` : ''}</span>`;
+    } else {
+      const displayMats = mats.slice(0, 2);
+      const remaining = mats.length - 2;
+      matTagsHtml = `
+        <div style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;white-space:nowrap">
+          <span class="badge" style="background:#e0f2fe;color:#0369a1;font-weight:700;font-size:11px;padding:1px 6px;white-space:nowrap">${mats.length} NVL${projFilter ? ` (${esc(projFilter)})` : ''}</span>
+          ${displayMats.map(m => `
+            <button type="button" class="link-button" data-open="${m.id}" style="font-size:10.5px;padding:1px 5px;background:#fff;border:1px solid #cbd5e1;border-radius:4px;color:#1e40af;text-decoration:none;white-space:nowrap;font-family:monospace" title="${esc(m.data?.material_name || '')}">
+              ${esc(m.data?.material_code)}
+            </button>
+          `).join('')}
+          ${remaining > 0 ? `<span style="font-size:10px;color:#64748b;white-space:nowrap;cursor:help" title="${mats.slice(2).map(m=>m.data?.material_code).join(', ')}">+${remaining} khác</span>` : ''}
+        </div>
+      `;
+    }
+
+    const declWithFile = decls.find(dc => dc.files && dc.files.length > 0);
+    const declFile = declWithFile?.files?.[0];
+    let declLinkHtml = '';
+    if (declFile) {
+      declLinkHtml = `<a href="/api/evidence/${declFile.id}" target="_blank" style="color:#2563eb;font-size:11px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:3px;background:#eff6ff;padding:1px 6px;border-radius:4px;border:1px solid #bfdbfe">📄 ${esc(declWithFile.data?.declaration_no || 'Declaration')} 📥</a>`;
+    } else if (decls.length > 0) {
+      declLinkHtml = `<span style="color:#059669;font-size:11px;font-weight:600">✓ Đã nộp (${decls.length})</span>`;
+    } else {
+      declLinkHtml = `<span style="color:#94a3b8;font-size:11px">Chưa nộp</span>`;
+    }
+
+    return `
+      <tr>
+        <td>
+          <div>
+            <button class="link-button" data-open="${r.id}" style="font-weight:700;font-size:12.5px;color:#0f172a">${esc(supName)}</button>
+            <div style="font-size:11px;color:#64748b;margin-top:1px">${esc(d.contact || '')} ${d.phone ? `· ${esc(d.phone)}` : ''}</div>
+          </div>
+        </td>
+        <td>${matTagsHtml}</td>
+        <td>${badge(status)}</td>
+        <td><span style="font-size:11.5px;font-weight:600;color:#334155">${esc(grade)}</span></td>
+        <td style="font-size:11.5px">${dateText(lastDate)}</td>
+        <td>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:11.5px;font-weight:500">${dateText(nextDate)}</span>
+            ${scheduleBadge}
+          </div>
+        </td>
+        <td>${declLinkHtml}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="link-button" data-open="${r.id}" style="font-size:11.5px">👁️ Chi tiết</button>
+            <button type="button" class="link-button evaluate-supplier-btn" data-supplier-id="${r.id}" style="font-size:11.5px;color:#2563eb;font-weight:600">✏️ Đánh giá</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return head('Quản lý Nhà cung cấp & Đánh giá định kỳ', '') + kpiCardsHtml + quickFilterHtml + `
+    <section class="card fill-card">
+      <form class="toolbar" id="filters" data-module="suppliers">
+        <input type="search" name="q" placeholder="Tìm tên NCC, NVL cung cấp, liên hệ, email…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">
+        <select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án">
+          <option value="">Tất cả dự án (${bomProjects.length})</option>
+          ${bomProjects.map(p => `<option value="${esc(p)}" ${projFilter===p?'selected':''}>Dự án: ${esc(p)}</option>`).join('')}
+        </select>
+        <select name="status" title="Lọc theo Trạng thái đánh giá" aria-label="Trạng thái">
+          <option value="">Tất cả trạng thái</option>
+          <option value="Approved" ${stFilter==='Approved'?'selected':''}>Approved (Đạt chuẩn)</option>
+          <option value="Qualified" ${stFilter==='Qualified'?'selected':''}>Qualified (Đủ điều kiện)</option>
+          <option value="Conditional" ${stFilter==='Conditional'?'selected':''}>Conditional (Có điều kiện)</option>
+          <option value="Pending" ${stFilter==='Pending'?'selected':''}>Pending (Chờ đánh giá)</option>
+          <option value="Blacklist" ${stFilter==='Blacklist'?'selected':''}>Blacklist (Đình chỉ)</option>
+          <option value="audit_due" ${stFilter==='audit_due'?'selected':''}>⏰ Đến hạn đánh giá (≤ 60 ngày)</option>
+        </select>
+        <select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select>
+        <div class="toolbar-actions-group">
+          <button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
+          <button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+        </div>
+        <div class="toolbar-actions-right">
+          <button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+          ${can('suppliers','Create')?`<button type="button" class="primary toolbar-btn" id="add-supplier-eval-btn" title="Thêm Nhà cung cấp mới" aria-label="Thêm Nhà cung cấp mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}
+        </div>
+      </form>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th><button class="link-button" data-sort="supplier">Nhà cung cấp ${listState.sort==='supplier'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="min-width:210px">Danh sách NVL đang cấp</th>
+              <th><button class="link-button" data-sort="evaluation_status">Tình trạng đánh giá ${listState.sort==='evaluation_status'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th><button class="link-button" data-sort="audit_grade">Xếp loại / Grade ${listState.sort==='audit_grade'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th><button class="link-button" data-sort="last_audit_date">Ngày đánh giá ${listState.sort==='last_audit_date'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th><button class="link-button" data-sort="next_audit_date">Hạn đánh giá tiếp theo ${listState.sort==='next_audit_date'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th>Cam kết Declaration</th>
+              <th>Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">Không tìm thấy nhà cung cấp nào phù hợp.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      ${pagination}
+    </section>
+  `;
+}
+
+async function materialsListPage() {
+  const [materialsRes, reportsRes, declRes, matDeclRes, suppliersRes, bomRes] = await Promise.all([
+    api('/records?module=materials&size=2000'),
+    api('/records?module=reports&size=2000'),
+    api('/records?module=declarations&size=2000'),
+    api('/records?module=material-declarations&size=2000'),
+    api('/records?module=suppliers&size=2000'),
+    api('/records?module=bom&size=2000')
+  ]);
+
+  const allMaterials = materialsRes.items || [];
+  const allReports = reportsRes.items || [];
+  const allDeclarations = [...(declRes.items || []), ...(matDeclRes.items || [])];
+  const allSuppliers = suppliersRes.items || [];
+  const allBom = bomRes.items || [];
+
+  const bomProjects = [...new Set(allBom.map(b => b.data?.project).filter(Boolean))].sort();
+  const bomProjMats = {};
+  allBom.forEach(b => {
+    const p = b.data?.project;
+    const mc = b.data?.material_code;
+    if (p && mc) {
+      if (!bomProjMats[p]) bomProjMats[p] = new Set();
+      bomProjMats[p].add(mc);
+    }
+  });
+
+  window.psMaterialsMap = Object.fromEntries(allMaterials.map(m => [m.id, m]));
+
+  // Map material_code -> list of reports
+  const matReportsMap = {};
+  allReports.forEach(r => {
+    const code = (r.data?.material_code || '').trim();
+    if (code) {
+      if (!matReportsMap[code]) matReportsMap[code] = [];
+      matReportsMap[code].push(r);
+    }
+  });
+
+  // Map material_code -> declarations, and supplier -> declarations
+  const matDeclMap = {};
+  const supDeclMap = {};
+  allDeclarations.forEach(d => {
+    const code = (d.data?.material_code || '').trim();
+    const sup = (d.data?.supplier || '').trim();
+    if (code) {
+      if (!matDeclMap[code]) matDeclMap[code] = [];
+      matDeclMap[code].push(d);
+    }
+    if (sup) {
+      if (!supDeclMap[sup]) supDeclMap[sup] = [];
+      supDeclMap[sup].push(d);
+    }
+  });
+
+  const projFilter = listState.project || '';
+  let projectScopedMaterials = allMaterials;
+  if (projFilter) {
+    projectScopedMaterials = allMaterials.filter(m => {
+      const d = m.data || {};
+      return d.project === projFilter || (bomProjMats[projFilter] && bomProjMats[projFilter].has(d.material_code));
+    });
+  }
+
+  const now = new Date();
+
+  // Process compliance status for each material
+  allMaterials.forEach(m => {
+    const d = m.data || {};
+    const code = (d.material_code || '').trim();
+    const sup = (d.supplier || '').trim();
+
+    let reqTests = String(d.required_tests || '').split(',').map(s => s.trim()).filter(Boolean);
+    m._reqTests = reqTests;
+
+    const matReps = matReportsMap[code] || [];
+    const testStatusList = [];
+
+    reqTests.forEach(t => {
+      const matching = matReps.filter(r => (r.data?.test_type || '').toLowerCase() === t.toLowerCase());
+      if (matching.length === 0) {
+        testStatusList.push({ test: t, status: 'Missing', report: null, days: null });
+      } else {
+        const latest = [...matching].sort((a, b) => String(b.data?.expiry_date || '9999').localeCompare(String(a.data?.expiry_date || '9999')))[0];
+        const res = (latest.data?.result || 'PASS').toUpperCase();
+        let st = 'Valid';
+        let remainingDays = null;
+        if (res === 'FAIL' || res === 'NG') {
+          st = 'NG';
+        } else if (latest.data?.expiry_date) {
+          const exp = new Date(latest.data.expiry_date);
+          remainingDays = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
+          if (remainingDays < 0) st = 'Expired';
+          else if (remainingDays <= 90) st = 'ExpiringSoon';
+          else st = 'Valid';
+        }
+        testStatusList.push({ test: t, status: st, report: latest, days: remainingDays });
+      }
+    });
+
+    m._testStatusList = testStatusList;
+
+    // Overall compliance
+    if (testStatusList.some(x => x.status === 'NG' || x.status === 'Expired')) {
+      m._complianceStatus = 'ExpiredNG';
+    } else if (testStatusList.some(x => x.status === 'Missing')) {
+      m._complianceStatus = 'Missing';
+    } else if (testStatusList.some(x => x.status === 'ExpiringSoon')) {
+      m._complianceStatus = 'ExpiringSoon';
+    } else {
+      m._complianceStatus = 'Compliant';
+    }
+
+    m._declarations = matDeclMap[code] || supDeclMap[sup] || [];
+  });
+
+  // Calculate scoped KPI counts
+  let compliantCount = 0;
+  let missingCount = 0;
+  let expiringSoonCount = 0;
+  let expiredNgCount = 0;
+  let activeCount = 0;
+
+  projectScopedMaterials.forEach(m => {
+    const d = m.data || {};
+    const usage = d.usage_status || 'Đang sử dụng';
+    if (usage === 'Đang sử dụng') activeCount++;
+    if (m._complianceStatus === 'Compliant') compliantCount++;
+    else if (m._complianceStatus === 'Missing') missingCount++;
+    else if (m._complianceStatus === 'ExpiringSoon') expiringSoonCount++;
+    else if (m._complianceStatus === 'ExpiredNG') expiredNgCount++;
+  });
+
+  // Filtering
+  let filtered = projectScopedMaterials;
+  const q = (listState.q || '').trim().toLowerCase();
+  const stFilter = listState.status || '';
+
+  if (q) {
+    filtered = filtered.filter(m => {
+      const d = m.data || {};
+      const code = (d.material_code || '').toLowerCase();
+      const name = (d.material_name || '').toLowerCase();
+      const sup = (d.supplier || '').toLowerCase();
+      const proj = (d.project || '').toLowerCase();
+      const cat = (d.category || '').toLowerCase();
+      const tests = (d.required_tests || '').toLowerCase();
+      return code.includes(q) || name.includes(q) || sup.includes(q) || proj.includes(q) || cat.includes(q) || tests.includes(q);
+    });
+  }
+
+  if (stFilter) {
+    if (stFilter === 'Compliant') {
+      filtered = filtered.filter(m => m._complianceStatus === 'Compliant');
+    } else if (stFilter === 'Missing') {
+      filtered = filtered.filter(m => m._complianceStatus === 'Missing');
+    } else if (stFilter === 'ExpiringSoon') {
+      filtered = filtered.filter(m => m._complianceStatus === 'ExpiringSoon');
+    } else if (stFilter === 'ExpiredNG') {
+      filtered = filtered.filter(m => m._complianceStatus === 'ExpiredNG');
+    } else if (stFilter === 'Active') {
+      filtered = filtered.filter(m => (m.data?.usage_status || 'Đang sử dụng') === 'Đang sử dụng');
+    } else if (stFilter === 'Inactive') {
+      filtered = filtered.filter(m => (m.data?.usage_status || '') !== 'Đang sử dụng');
+    } else {
+      filtered = filtered.filter(m => (m.data?.usage_status === stFilter) || (m.data?.status === stFilter));
+    }
+  }
+
+  // Sorting
+  const sortKey = listState.sort || 'material_code';
+  const sortDir = listState.direction || 'asc';
+  filtered.sort((a, b) => {
+    let valA, valB;
+    if (sortKey === 'material_code') {
+      valA = a.data?.material_code || '';
+      valB = b.data?.material_code || '';
+    } else if (sortKey === 'material_name') {
+      valA = a.data?.material_name || '';
+      valB = b.data?.material_name || '';
+    } else if (sortKey === 'supplier') {
+      valA = a.data?.supplier || '';
+      valB = b.data?.supplier || '';
+    } else if (sortKey === 'category') {
+      valA = a.data?.category || '';
+      valB = b.data?.category || '';
+    } else if (sortKey === 'project') {
+      valA = a.data?.project || '';
+      valB = b.data?.project || '';
+    } else if (sortKey === 'compliance') {
+      valA = a._complianceStatus || '';
+      valB = b._complianceStatus || '';
+    } else if (sortKey === 'usage_status') {
+      valA = a.data?.usage_status || '';
+      valB = b.data?.usage_status || '';
+    } else {
+      valA = a[sortKey] || a.data?.[sortKey] || '';
+      valB = b[sortKey] || b.data?.[sortKey] || '';
+    }
+    return sortDir === 'asc' ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
+  });
+
+  const matOptimal = (function() {
+    const vh = window.innerHeight || 900;
+    const count = Math.floor((vh - 350) / 42.5);
+    return Math.max(8, Math.min(30, count)) || 13;
+  })();
+  const pageSize = Number(listState.materialSize) || matOptimal;
+  listState.materialSize = pageSize;
+  listState.size = pageSize;
+  const page = listState.page || 1;
+  const total = filtered.length;
+  const pagedItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pagination = paginationHtml(page, total, pageSize);
+
+  const defaultSizes = [...new Set([pageSize, 10, 12, 13, 14, 16, 17, 20, 25, 2000])].sort((a, b) => a - b);
+  const sizeOptHtml = defaultSizes.map(v => `<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${total} NVL)`:`${v} / trang`}</option>`).join('');
+
+  const kpiCardsHtml = `
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;box-shadow:0 1px 2px rgba(0,0,0,0.02);cursor:pointer" data-status-filter="">
+        <div style="font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase">Tổng số NVL</div>
+        <div style="font-size:22px;font-weight:700;color:#0f172a;margin-top:2px">${projectScopedMaterials.length}</div>
+        <small style="color:#64748b;font-size:10.5px">${projFilter ? `Dự án: <b>${esc(projFilter)}</b>` : 'Đang quản lý trong hệ thống'}</small>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Compliant">
+        <div style="font-size:11px;font-weight:600;color:#15803d;text-transform:uppercase">Đạt chuẩn (Compliant)</div>
+        <div style="font-size:22px;font-weight:700;color:#16a34a;margin-top:2px">${compliantCount}</div>
+        <small style="color:#15803d;font-size:10.5px">100% báo cáo kiểm nghiệm hợp lệ</small>
+      </div>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="Missing">
+        <div style="font-size:11px;font-weight:600;color:#b45309;text-transform:uppercase">Cần nộp / Thiếu báo cáo</div>
+        <div style="font-size:22px;font-weight:700;color:#d97706;margin-top:2px">${missingCount}</div>
+        <small style="color:#b45309;font-size:10.5px">Thiếu 1 hoặc nhiều test bắt buộc</small>
+      </div>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="ExpiringSoon">
+        <div style="font-size:11px;font-weight:600;color:#1e40af;text-transform:uppercase">Sắp hết hạn (≤ 90 ngày)</div>
+        <div style="font-size:22px;font-weight:700;color:#2563eb;margin-top:2px">${expiringSoonCount}</div>
+        <small style="color:#1e40af;font-size:10.5px">Cần yêu cầu NCC gia hạn</small>
+      </div>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;cursor:pointer" data-status-filter="ExpiredNG">
+        <div style="font-size:11px;font-weight:600;color:#b91c1c;text-transform:uppercase">Quá hạn / Không đạt (NG)</div>
+        <div style="font-size:22px;font-weight:700;color:#dc2626;margin-top:2px">${expiredNgCount}</div>
+        <small style="color:#b91c1c;font-size:10.5px">Báo cáo quá hạn hoặc kết quả NG</small>
+      </div>
+    </div>
+  `;
+
+  const quickFilterHtml = `
+    <div style="display:flex;gap:6px;margin-bottom:10px;padding:0 2px;flex-wrap:wrap">
+      <button type="button" class="tab-pill ${!stFilter?'active':''}" data-status-filter="" style="border:none;background:${!stFilter?'#2563eb':'#e2e8f0'};color:${!stFilter?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${!stFilter?'600':'500'};cursor:pointer">Tất cả (${projectScopedMaterials.length})</button>
+      <button type="button" class="tab-pill ${stFilter==='Compliant'?'active':''}" data-status-filter="Compliant" style="border:none;background:${stFilter==='Compliant'?'#16a34a':'#e2e8f0'};color:${stFilter==='Compliant'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Compliant'?'600':'500'};cursor:pointer">✓ Đạt chuẩn (${compliantCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='Missing'?'active':''}" data-status-filter="Missing" style="border:none;background:${stFilter==='Missing'?'#d97706':'#e2e8f0'};color:${stFilter==='Missing'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Missing'?'600':'500'};cursor:pointer">⏳ Cần nộp báo cáo (${missingCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='ExpiringSoon'?'active':''}" data-status-filter="ExpiringSoon" style="border:none;background:${stFilter==='ExpiringSoon'?'#2563eb':'#e2e8f0'};color:${stFilter==='ExpiringSoon'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='ExpiringSoon'?'600':'500'};cursor:pointer">⚠️ Sắp hết hạn (${expiringSoonCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='ExpiredNG'?'active':''}" data-status-filter="ExpiredNG" style="border:none;background:${stFilter==='ExpiredNG'?'#dc2626':'#e2e8f0'};color:${stFilter==='ExpiredNG'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='ExpiredNG'?'600':'500'};cursor:pointer">🚫 Quá hạn / NG (${expiredNgCount})</button>
+      <button type="button" class="tab-pill ${stFilter==='Active'?'active':''}" data-status-filter="Active" style="border:none;background:${stFilter==='Active'?'#059669':'#e2e8f0'};color:${stFilter==='Active'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${stFilter==='Active'?'600':'500'};cursor:pointer">🟢 Đang sử dụng (${activeCount})</button>
+    </div>
+  `;
+
+  const rowsHtml = pagedItems.map(m => {
+    const d = m.data || {};
+    const code = d.material_code || '—';
+    const name = d.material_name || '—';
+    const cat = d.category || 'Raw material';
+    const sup = d.supplier || '—';
+    const usage = d.usage_status || 'Đang sử dụng';
+    const decls = m._declarations || [];
+
+    const declWithFile = decls.find(dc => dc.files && dc.files.length > 0);
+    const declFile = declWithFile?.files?.[0];
+    let declLinkHtml = '';
+    if (declFile) {
+      declLinkHtml = `<a href="/api/evidence/${declFile.id}" target="_blank" style="color:#2563eb;font-size:10.5px;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:3px;background:#eff6ff;padding:1px 5px;border-radius:4px;border:1px solid #bfdbfe" title="${esc(declWithFile.data?.declaration_no || 'Declaration')}">📄 Cam kết 📥</a>`;
+    } else if (decls.length > 0) {
+      declLinkHtml = `<span style="color:#059669;font-size:10.5px;font-weight:600">✓ Đã nộp</span>`;
+    } else {
+      declLinkHtml = `<span style="color:#94a3b8;font-size:10.5px">Chưa nộp</span>`;
+    }
+
+    const testBadges = m._testStatusList.map(item => {
+      const t = item.test;
+      const rep = item.report;
+      if (item.status === 'Valid') {
+        const title = rep ? `${esc(t)}: ${esc(rep.data?.report_id || '')} (Hạn: ${dateText(rep.data?.expiry_date)})` : t;
+        return `<span class="badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;font-size:10.5px;padding:1px 6px;white-space:nowrap" title="${title}">✓ ${esc(t)}</span>`;
+      } else if (item.status === 'ExpiringSoon') {
+        const title = rep ? `${esc(t)}: ${esc(rep.data?.report_id || '')} (Còn ${item.days} ngày - Hạn: ${dateText(rep.data?.expiry_date)})` : t;
+        return `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:10.5px;padding:1px 6px;white-space:nowrap" title="${title}">⚠️ ${esc(t)} (${item.days}d)</span>`;
+      } else if (item.status === 'Expired') {
+        const title = rep ? `${esc(t)}: ${esc(rep.data?.report_id || '')} (Quá hạn ${Math.abs(item.days)} ngày)` : t;
+        return `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-size:10.5px;padding:1px 6px;white-space:nowrap" title="${title}">✕ ${esc(t)} (Hết hạn)</span>`;
+      } else if (item.status === 'NG') {
+        return `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-size:10.5px;padding:1px 6px;white-space:nowrap" title="${esc(t)}: Kết quả Không đạt (FAIL/NG)">✕ ${esc(t)} (NG)</span>`;
+      } else {
+        return `<span class="badge" style="background:#f8fafc;color:#64748b;border:1px dashed #cbd5e1;font-size:10.5px;padding:1px 6px;white-space:nowrap" title="${esc(t)}: Chưa có báo cáo kiểm nghiệm">⏳ ${esc(t)}</span>`;
+      }
+    }).join(' ');
+
+    let compBadge = '';
+    if (m._complianceStatus === 'Compliant' && (m._reqTests || []).length === 0) {
+      compBadge = `<span class="badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;font-size:11px;font-weight:600;white-space:nowrap">Không yêu cầu kiểm nghiệm</span>`;
+    } else if (m._complianceStatus === 'Compliant') {
+      compBadge = `<span class="badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;font-size:11px;font-weight:600;white-space:nowrap">✓ Đạt chuẩn</span>`;
+    } else if (m._complianceStatus === 'ExpiringSoon') {
+      compBadge = `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:11px;font-weight:600;white-space:nowrap">⚠️ Sắp hết hạn</span>`;
+    } else if (m._complianceStatus === 'ExpiredNG') {
+      compBadge = `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-size:11px;font-weight:600;white-space:nowrap">✕ Quá hạn / NG</span>`;
+    } else {
+      compBadge = `<span class="badge" style="background:#fffbeb;color:#b45309;border:1px solid #fde68a;font-size:11px;font-weight:600;white-space:nowrap">⏳ Thiếu báo cáo</span>`;
+    }
+
+    let usageBadge = '';
+    if (usage === 'Đang sử dụng') {
+      usageBadge = `<span class="badge" style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;font-size:10.5px;white-space:nowrap">🟢 Đang sử dụng</span>`;
+    } else if (usage === 'Tạm ngưng') {
+      usageBadge = `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:10.5px;white-space:nowrap">🟡 Tạm ngưng</span>`;
+    } else {
+      usageBadge = `<span class="badge" style="background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;font-size:10.5px;white-space:nowrap">⚪ Ngừng dùng</span>`;
+    }
+
+    return `
+      <tr>
+        <td style="padding:6px 10px">
+          <div>
+            <button class="link-button" data-open="${m.id}" style="font-weight:700;font-size:12.5px;color:#0f172a;font-family:monospace">${esc(code)}</button>
+            <div style="font-size:11px;color:#64748b;margin-top:1px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(name)}">${esc(name)}</div>
+          </div>
+        </td>
+        <td style="padding:6px 10px">
+          <span class="badge" style="background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;font-size:10.5px">${esc(cat)}</span>
+        </td>
+        <td style="padding:6px 10px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:#1e293b">${esc(sup)}</div>
+            <div style="margin-top:2px">${declLinkHtml}</div>
+          </div>
+        </td>
+        <td style="padding:6px 10px">
+          <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+            ${testBadges || '<span class="badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;font-size:10.5px;padding:1px 6px;white-space:nowrap">Không yêu cầu</span>'}
+          </div>
+        </td>
+        <td style="padding:6px 10px">${compBadge}</td>
+        <td style="padding:6px 10px">${usageBadge}</td>
+        <td style="padding:6px 10px;white-space:nowrap;width:150px;min-width:150px;max-width:none;overflow:visible">
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="link-button" data-open="${m.id}" style="font-size:11.5px">👁️ Chi tiết</button>
+            <button type="button" class="link-button edit-material-btn" data-material-id="${m.id}" style="font-size:11.5px;color:#2563eb;font-weight:600" title="Chỉnh sửa thông tin NVL & cập nhật báo cáo kiểm nghiệm">✏️ Chỉnh sửa</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  return head('Danh mục Nguyên vật liệu & Hồ sơ Tuân thủ', '') + kpiCardsHtml + quickFilterHtml + `
+    <section class="card fill-card">
+      <form class="toolbar" id="filters" data-module="materials">
+        <input type="search" name="q" placeholder="Tìm mã NVL, tên NVL, nhà cung cấp, dự án…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">
+        <select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án">
+          <option value="">Tất cả dự án (${bomProjects.length})</option>
+          ${bomProjects.map(p => `<option value="${esc(p)}" ${projFilter===p?'selected':''}>Dự án: ${esc(p)}</option>`).join('')}
+        </select>
+        <select name="status" title="Lọc theo Trạng thái tuân thủ & sử dụng" aria-label="Trạng thái">
+          <option value="">Tất cả trạng thái</option>
+          <option value="Compliant" ${stFilter==='Compliant'?'selected':''}>✓ Đạt chuẩn (Compliant)</option>
+          <option value="Missing" ${stFilter==='Missing'?'selected':''}>⏳ Cần nộp / Thiếu báo cáo</option>
+          <option value="ExpiringSoon" ${stFilter==='ExpiringSoon'?'selected':''}>⚠️ Sắp hết hạn (≤ 90 ngày)</option>
+          <option value="ExpiredNG" ${stFilter==='ExpiredNG'?'selected':''}>🚫 Quá hạn / Không đạt (NG)</option>
+          <option value="Active" ${stFilter==='Active'?'selected':''}>🟢 Đang sử dụng</option>
+          <option value="Inactive" ${stFilter==='Inactive'?'selected':''}>⚪ Tạm ngưng / Ngừng dùng</option>
+        </select>
+        <select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select>
+        <div class="toolbar-actions-group">
+          <button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button>
+          <button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+        </div>
+        <div class="toolbar-actions-right">
+          <button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+          ${can('materials','Create')?`<button type="button" class="primary toolbar-btn" id="add-material-btn" title="Thêm Nguyên vật liệu mới" aria-label="Thêm NVL mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}
+        </div>
+      </form>
+      <div class="table-scroll">
+        <table style="width:100%">
+          <thead>
+            <tr>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="material_code">Mã & Tên vật liệu ${listState.sort==='material_code'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="category">Phân loại ${listState.sort==='category'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="supplier">Nhà cung cấp & Cam kết ${listState.sort==='supplier'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px;min-width:180px">Hồ sơ Báo cáo kiểm nghiệm</th>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="compliance">Trạng thái tuân thủ ${listState.sort==='compliance'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px"><button class="link-button" data-sort="usage_status">Tình trạng sử dụng ${listState.sort==='usage_status'?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>
+              <th style="padding:8px 10px;width:170px;min-width:170px;white-space:nowrap">Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml || '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Không tìm thấy vật liệu nào phù hợp.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      ${pagination}
+    </section>
+  `;
+}
+
 async function listPage(module){
+  if(module==='materials') {
+    return await materialsListPage();
+  }
+  if(module==='suppliers') {
+    return await suppliersListPage();
+  }
   if(module==='bom') {
     const params = {module: 'bom', size: 1000};
     if(listState.q) params.q = listState.q;
@@ -393,81 +1342,1090 @@ async function listPage(module){
   const hasProject = module === 'materials';
   const hasDate = module !== 'materials' && config.fields.some(f=>f.type==='date');
   const sizeOptHtml = [15,20,25,50,2000].map(v=>`<option value="${v}" ${pageSize===v?'selected':''}>${v===2000?`Tất cả (${result.total} mục)`:`${v} / trang`}</option>`).join('');
-  return head(config.title,'')+`<section class="card fill-card"><form class="toolbar" id="filters"><input type="search" name="q" placeholder="Tìm mã, tên, NCC, CAS…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasProject ? `<select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án"><option value="">Tất cả dự án</option><option value="Co-mold" ${listState.project==='Co-mold'?'selected':''}>Co-molded / Co-mold</option><option value="SE Jump" ${listState.project==='SE Jump'?'selected':''}>SE Jump</option><option value="CALDERA" ${listState.project==='CALDERA'?'selected':''}>CALDERA, SIERRA 8</option></select><select name="category" id="category-filter" title="Lọc theo Category" aria-label="Category"><option value="">Tất cả Category</option><option value="Raw material" ${listState.category==='Raw material'?'selected':''}>Raw material</option><option value="Packing material" ${listState.category==='Packing material'?'selected':''}>Packing material</option></select>` : ''}${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${hasDate ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
+  const reportsQuickFilter = module === 'reports' ? `
+    <div style="display:flex;gap:6px;margin-bottom:8px;padding:0 2px">
+      <button type="button" class="tab-pill ${!listState.status?'active':''}" data-status-filter="" style="border:none;background:${!listState.status?'#2563eb':'#e2e8f0'};color:${!listState.status?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${!listState.status?'600':'500'};cursor:pointer">Tất cả báo cáo</button>
+      <button type="button" class="tab-pill ${listState.status==='Valid'?'active':''}" data-status-filter="Valid" style="border:none;background:${listState.status==='Valid'?'#16a34a':'#e2e8f0'};color:${listState.status==='Valid'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${listState.status==='Valid'?'600':'500'};cursor:pointer">✓ Đang còn hạn (Valid)</button>
+      <button type="button" class="tab-pill ${listState.status==='Expiring Soon'?'active':''}" data-status-filter="Expiring Soon" style="border:none;background:${listState.status==='Expiring Soon'?'#d97706':'#e2e8f0'};color:${listState.status==='Expiring Soon'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${listState.status==='Expiring Soon'?'600':'500'};cursor:pointer">⚠️ Sắp hết hạn (≤ 90 ngày)</button>
+      <button type="button" class="tab-pill ${listState.status==='Expired'?'active':''}" data-status-filter="Expired" style="border:none;background:${listState.status==='Expired'?'#dc2626':'#e2e8f0'};color:${listState.status==='Expired'?'#fff':'#475569'};padding:4px 12px;border-radius:6px;font-size:11.5px;font-weight:${listState.status==='Expired'?'600':'500'};cursor:pointer">🗄️ Kho lưu trữ hết hạn (Expired)</button>
+    </div>
+  ` : '';
+  return head(config.title,'')+reportsQuickFilter+`<section class="card fill-card"><form class="toolbar" id="filters"><input type="search" name="q" placeholder="Tìm mã, tên, NCC, CAS…" value="${esc(listState.q)}" aria-label="Tìm trong bảng">${hasProject ? `<select name="project" id="project-filter" title="Lọc theo Dự án" aria-label="Dự án"><option value="">Tất cả dự án</option><option value="Co-mold" ${listState.project==='Co-mold'?'selected':''}>Co-molded / Co-mold</option><option value="SE Jump" ${listState.project==='SE Jump'?'selected':''}>SE Jump</option><option value="CALDERA" ${listState.project==='CALDERA'?'selected':''}>CALDERA, SIERRA 8</option></select><select name="category" id="category-filter" title="Lọc theo Category" aria-label="Category"><option value="">Tất cả Category</option><option value="Raw material" ${listState.category==='Raw material'?'selected':''}>Raw material</option><option value="Packing material" ${listState.category==='Packing material'?'selected':''}>Packing material</option></select>` : ''}${hasStatus ? `<select name="status" title="Lọc theo Trạng thái" aria-label="Trạng thái"><option value="">Tất cả trạng thái</option>${['Pending','Compliant','NG','Pass','Valid','Expiring Soon','Expired','Overdue','Open','Closed','Completed','Due Soon','Not Applicable'].map(s=>`<option ${listState.status===s?'selected':''}>${s}</option>`).join('')}</select>` : ''}${hasDate ? `<label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Từ<input type="date" name="start" value="${esc(listState.start)}" style="width:120px"></label><label style="margin:0;display:flex;align-items:center;gap:3px;font-size:11px;color:var(--muted)">Đến<input type="date" name="end" value="${esc(listState.end)}" style="width:120px"></label>` : ''}<select name="size" id="page-size-select" title="Số lượng dòng mỗi trang" aria-label="Số dòng mỗi trang">${sizeOptHtml}</select><div class="toolbar-actions-group"><button type="submit" class="toolbar-btn" title="Áp dụng tìm kiếm & bộ lọc" aria-label="Áp dụng bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></button><button type="button" id="reset-filter" class="toolbar-btn" title="Xóa toàn bộ bộ lọc & làm mới" aria-label="Xóa bộ lọc"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button></div><div class="toolbar-actions-right"><button type="button" id="export" class="toolbar-btn" title="Xuất danh sách ra file Excel" aria-label="Xuất file Excel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>${can(module,'Create')?`<button type="button" class="primary toolbar-btn" id="add-record" title="Thêm hồ sơ mới" aria-label="Thêm hồ sơ mới"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>`:''}</div></form><div class="table-scroll"><table><thead><tr>${columns.map(f=>`<th><button class="link-button" data-sort="${f.key}">${esc(f.label)} ${listState.sort===f.key?(listState.direction==='asc'?'↑':'↓'):'↕'}</button></th>`).join('')}${hasDri ? '<th>DRI</th>' : ''}${hasStatus ? '<th>Trạng thái</th>' : ''}<th></th></tr></thead><tbody>${result.items.map(r=>`<tr>${columns.map((f,i)=>`<td title="${esc(r.data[f.key])}">${i===0?`<button class="link-button" data-open="${r.id}">${esc(r.data[f.key]||label(r))}</button>`:esc(r.data[f.key]??'—')}</td>`).join('')}${hasDri ? `<td>${esc(r.data.dri||'Chưa phân công')}</td>` : ''}${hasStatus ? `<td>${badge(r.display_status)}</td>` : ''}<td><button class="link-button" data-open="${r.id}">👁️ Xem chi tiết</button></td></tr>`).join('')}</tbody></table></div>${result.items.length?'':empty(result.total?'Không có kết quả trên trang này':'Chưa có hồ sơ phù hợp','Thêm hồ sơ hoặc thay đổi bộ lọc để tiếp tục.')}${pagination}</section>`;
 }
 
 
-function detailPage(row){const config=catalog.modules[row.module];const d=row.data;const sections=config.fields.filter(f=>d[f.key]!==undefined&&d[f.key]!=='');
-let chipsHtml=row.module==='materials'?`<div class="chips" style="flex:1">${badge(d.usage_status||'Chưa xác định')}${badge(d.dossier_status||'Chưa đánh giá')}</div>`:config.fields.some(f=>f.key==='dri')?`<div class="chips" style="flex:1">${badge(row.display_status)}<span class="badge">${esc(row.module)}</span><span class="badge">DRI: ${esc(d.dri||'Chưa phân công')}</span></div>`:'';
-let actionsHtml=`<button data-route="${row.module}">← Danh sách</button>${can(row.module,'Edit')?'<button id="edit-record" class="primary">Chỉnh sửa</button>':''}${can(row.module,'Delete')?'<button id="archive-record" class="danger">Lưu trữ</button>':''}`;
-let html=head(label(row),`${config.title} · Revision ${row.version} · Cập nhật ${timeText(row.updated_at)}`) + `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px">${chipsHtml}<div class="head-actions" style="display:flex;gap:8px">${actionsHtml}</div></div>`;
-if(row.conflicts?.length)html+=`<div class="alert">Mapping FMD / TRM không khớp: ${row.conflicts.map(c=>`${esc(c.test_type)}: FMD ${esc(c.fmd.join(', '))}; TRM ${esc(c.trm.join(', '))}`).join(' · ')}. Cần xác minh báo cáo gốc.</div>`;
-if(row.module==='capa'){const stages=[['issue','Issue'],['containment','Containment'],['root_cause','Root Cause'],['corrective','Corrective Action'],['evidence','Evidence'],['verification','Verification'],['closure','Closure']];html+=`<div class="timeline">${stages.map(([k,t])=>`<div class="timeline-step ${(k==='evidence'?row.evidence.length:d[k])?'done':''}"><b>${t}</b><small>${(k==='evidence'?row.evidence.length:d[k])?'Đã ghi nhận':'Chưa ghi nhận'}</small></div>`).join('')}</div>`;}
-let infoHtml=`<section class="card" ${row.module==='materials'?'style="margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0"':''}><div class="card-header"><h3>Thông tin hồ sơ</h3></div><div class="card-body"><div class="detail-grid" ${row.module==='materials'?'style="grid-template-columns:1fr 1fr"':''}>${sections.map(f=>`<div class="detail-item"><small>${esc(f.label)}</small><div>${esc(d[f.key])}</div></div>`).join('')}</div>${d._source?`<div class="source" style="margin-top:22px">${sourceText(d._source)}<details><summary>Xem ô nguồn / công thức</summary><pre>${esc(JSON.stringify(d._source,null,2))}</pre></details></div>`:''}${d._sources?`<details><summary>${d._sources.length} dòng nguồn tạo hồ sơ vật liệu</summary>${d._sources.map(s=>`<p class="source">${sourceText(s)}</p>`).join('')}</details>`:''}</div></section>`;
-const historyHtml=`<section class="card" ${row.module==='materials'?'style="margin-bottom:0;border-radius:0;border-top:0"':''}><div class="card-header"><h3>Evidence & phiên bản file</h3>${can(row.module,'Upload')?'<label style="margin:0"><input type="file" id="evidence-file" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx,.txt" hidden><button id="upload-evidence">↑ Đính kèm file</button></label>':''}</div>${row.evidence.length?`<div class="table-scroll"><table><thead><tr><th>File</th><th>Người upload</th><th>Ngày</th><th>Dung lượng</th><th></th></tr></thead><tbody>${row.evidence.map(e=>`<tr><td title="SHA256: ${e.checksum}">${esc(e.name)}</td><td>${esc(e.uploader)}</td><td>${dateText(e.created_at)}</td><td>${(e.size/1024).toFixed(1)} KB</td><td>${['application/pdf','image/png','image/jpeg'].includes(e.mime)?`<button class="link-button" data-preview="${e.id}">Preview</button> · `:''}<a href="/api/evidence/${e.id}">Tải xuống</a></td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có file evidence','File gốc trong workbook không tự động được coi là evidence đính kèm.')}</section><section class="card" ${row.module==='materials'?'style="border-top-left-radius:0;border-top-right-radius:0;margin-top:0"':''}><div class="card-header"><h3>Lịch sử thay đổi & Audit trail</h3></div><div class="card-body">${row.history.map(h=>`<details><summary>${timeText(h.at)} · ${esc(h.actor)} · ${esc(h.action)}</summary><div class="form-grid"><pre>Trước
-${esc(JSON.stringify(h.before,null,2))}</pre><pre>Sau
-${esc(JSON.stringify(h.after,null,2))}</pre></div></details>`).join('')||'<p class="muted">Chưa có thay đổi sau khi nhập dữ liệu nguồn.</p>'}</div></section>`;
-if(row.module==='materials'){
-    const related=row.related||[];
-    const boms = related.filter(r => r.module === 'bom');
-    const bomsHtml = boms.length ? `<section class="card" style="border-top-left-radius:0;border-top-right-radius:0;margin-top:0"><div class="card-header"><h3>Sử dụng trong BOM / Sản phẩm</h3></div>${rowTable(boms)}</section>` : '<section class="card" style="border-top-left-radius:0;border-top-right-radius:0;margin-top:0"><div class="card-body">'+empty('Chưa liên kết với Sản phẩm / BOM nào')+'</div></section>';
-    const tabSuppliers = materialSuppliers(row);
-    const compFiles=related.filter(r=>['documents','fmd','cts-1','cts-2','cts-3','reports'].includes(r.module));
-    const compType=r=>{if(r.module==='fmd')return'FMD';if(r.module.startsWith('cts'))return r.module.toUpperCase().replace('-','_');const j=JSON.stringify(r.data).toUpperCase();if(j.includes('ROHS'))return'RoHS';if(j.includes('MSDS'))return'MSDS';if(j.includes('SDS'))return'SDS';if(j.includes('HALOGEN'))return'Halogen-Free';if(j.includes('PFO')||j.includes('PFAS'))return'PFOA & PFOS';if(j.includes('REACH')||j.includes('SVHC'))return'REACH / SVHC';if(j.includes('VOC'))return'VOC';return'Khác';};
-    const cTypes=Array.from(new Set(compFiles.map(compType))).sort();
-    const compAllowed=can('documents','Upload')||can('reports','Upload');
-    
-    // Required Tests Logic
-    let req_tests = d.required_tests;
-    if(typeof req_tests==='string') req_tests=req_tests.split(',').map(x=>x.trim()).filter(x=>x);
-    if(!Array.isArray(req_tests)) req_tests=[];
-    
-    let compStatus = req_tests.length ? 'Compliant' : 'N/A';
-    let reqValid = 0;
-    const testAlerts = [];
-    req_tests.forEach(rt => {
-      const matching = compFiles.filter(r => r.module==='reports' && (r.data.test_type===rt || String(r.data.test_type||'').includes(rt)));
-      if(matching.length===0) { compStatus='Pending'; testAlerts.push(rt + ' Missing'); return; }
-      const latest = matching.sort((a,b)=>String(b.data.expiry_date||'9999').localeCompare(String(a.data.expiry_date||'9999')))[0];
-      const result = String(latest.data.result||'').toUpperCase();
-      const validity = latest.display_status;
-      if(result==='FAIL' || ['Expired', 'Overdue', 'NG'].includes(validity)) {
-        compStatus='Non-Compliant'; testAlerts.push(rt + ' FAIL/Expired');
-      } else if (result==='PASS') {
-        reqValid++;
-        if(validity==='Expiring Soon') { if(compStatus==='Compliant') compStatus='Expiring Soon'; testAlerts.push(rt + ' Expiring'); }
+let cachedTestTypes = null;
+async function getTestTypesList() {
+  if (cachedTestTypes) return cachedTestTypes;
+  try {
+    const res = await api('/records?module=test-types&size=200');
+    if (res?.items?.length) {
+      cachedTestTypes = res.items.map(r => r.data?.name).filter(Boolean);
+      return cachedTestTypes;
+    }
+  } catch(e) {}
+  return ['RoHS', 'Halogen-Free', 'REACH / SVHC', 'PFOA & PFOS', 'VOC', 'PFAS'];
+}
+
+async function openQuickEditTests(row) {
+  const testTypes = await getTestTypesList();
+  const currentTests = String(row.data.required_tests || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const options = [...new Set([...testTypes, ...currentTests])];
+  openModal('Cấu hình loại kiểm nghiệm: ' + (row.data.material_code || label(row)), `
+    <div style="margin-bottom:12px;font-size:12px;color:#64748b">
+      Chọn các loại báo cáo kiểm nghiệm bắt buộc áp dụng cho vật liệu này (dữ liệu lấy từ Cài đặt):
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;padding:12px;background:#f8fafc;border:1px solid #dce3ec;border-radius:8px;margin-bottom:14px">
+      ${options.map(t => {
+        const checked = currentTests.includes(t);
+        return `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:${checked?'#eff6ff':'#fff'};border:1px solid ${checked?'#3b82f6':'#cbd5e1'};border-radius:6px;font-size:12px;color:${checked?'#1e40af':'#334155'};font-weight:${checked?'600':'400'};user-select:none;margin:0">
+          <input type="checkbox" value="${esc(t)}" class="quick-test-toggle" ${checked?'checked':''} style="margin:0">
+          <span>${esc(t)}</span>
+        </label>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <a href="#/test-types" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">⚙️ Quản lý danh mục loại kiểm nghiệm trong Cài đặt →</a>
+    </div>
+  `, `
+    <button data-close>Hủy</button>
+    <button type="button" class="primary" id="save-quick-tests-btn">Lưu cấu hình</button>
+  `);
+
+  modal.querySelectorAll('.quick-test-toggle').forEach(chk => {
+    chk.onchange = () => {
+      const lbl = chk.closest('label');
+      if (lbl) {
+        lbl.style.background = chk.checked ? '#eff6ff' : '#fff';
+        lbl.style.borderColor = chk.checked ? '#3b82f6' : '#cbd5e1';
+        lbl.style.color = chk.checked ? '#1e40af' : '#334155';
+        lbl.style.fontWeight = chk.checked ? '600' : '400';
+      }
+    };
+  });
+
+  const btn = $('#save-quick-tests-btn');
+  if (btn) btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const selected = Array.from(modal.querySelectorAll('.quick-test-toggle:checked')).map(c => c.value);
+      const updatedData = { ...row.data, required_tests: selected.join(', ') };
+      await api('/records/' + row.id, {
+        method: 'PUT',
+        body: JSON.stringify({ module: 'materials', data: updatedData, version: row.version })
+      });
+      modal.close();
+      notify('Đã cập nhật loại kiểm nghiệm thành công.');
+      render();
+    } catch(err) {
+      alert('Lỗi: ' + err.message);
+    } finally {
+      if ($('#save-quick-tests-btn')) $('#save-quick-tests-btn').disabled = false;
+    }
+  };
+}
+
+function openAttachFileModal(reportId, reportNumber) {
+  openModal('Đính kèm file PDF: ' + (reportNumber || '#' + reportId), `
+    <form id="attach-file-form" style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:12px;color:#64748b">
+        Chọn file báo cáo kiểm nghiệm dạng PDF hoặc ảnh để đính kèm vào mã số <b>${esc(reportNumber || '')}</b>:
+      </div>
+      <div id="attach-drop-zone" style="border:2px dashed #3b82f6;border-radius:8px;padding:20px;text-align:center;background:#f8fafc;cursor:pointer">
+        <input type="file" id="attach-file-input" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx" style="display:none">
+        <div style="font-size:28px;margin-bottom:4px">📎</div>
+        <b style="color:#2563eb;font-size:13px;display:block" id="attach-file-label">Bấm vào đây để chọn file PDF</b>
+        <p style="margin:4px 0 0;font-size:11px;color:#94a3b8">Hỗ trợ .PDF, .PNG, .JPG (tối đa 50MB) · Kéo thả file vào đây</p>
+      </div>
+      <div id="attach-file-error" class="form-error"></div>
+    </form>
+  `, `
+    <button data-close>Hủy</button>
+    <button type="submit" form="attach-file-form" class="primary" id="save-attach-file-btn">Tải lên file</button>
+  `);
+
+  const fileInput = modal.querySelector('#attach-file-input');
+  const dropZone = modal.querySelector('#attach-drop-zone');
+
+  if (dropZone && fileInput) {
+    dropZone.onclick = () => fileInput.click();
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.style.background = '#eff6ff'; dropZone.style.borderColor = '#2563eb'; };
+    dropZone.ondragleave = () => { dropZone.style.background = '#f8fafc'; dropZone.style.borderColor = '#3b82f6'; };
+    dropZone.ondrop = (e) => {
+      e.preventDefault();
+      dropZone.style.background = '#f8fafc';
+      dropZone.style.borderColor = '#3b82f6';
+      if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        fileInput.dispatchEvent(new Event('change'));
+      }
+    };
+  }
+
+  fileInput.onchange = () => {
+    if (fileInput.files[0]) {
+      const f = fileInput.files[0];
+      const lbl = modal.querySelector('#attach-file-label');
+      if (lbl) lbl.innerHTML = `<span style="color:#16a34a">✓ Đã chọn: <b>${esc(f.name)}</b> (${(f.size/1024).toFixed(1)} KB)</span>`;
+      if (dropZone) {
+        dropZone.style.background = '#f0fdf4';
+        dropZone.style.borderColor = '#22c55e';
+      }
+    }
+  };
+
+  $('#attach-file-form').onsubmit = async (e) => {
+    e.preventDefault();
+    if (!fileInput.files[0]) {
+      $('#attach-file-error').textContent = 'Vui lòng chọn 1 tệp PDF hoặc ảnh đính kèm.';
+      return;
+    }
+    $('#save-attach-file-btn').disabled = true;
+    try {
+      const body = new FormData();
+      body.append('file', fileInput.files[0]);
+      await api('/records/' + reportId + '/evidence', { method: 'POST', body });
+      modal.close();
+      notify('Đã đính kèm file PDF thành công.');
+      render();
+    } catch(err) {
+      $('#attach-file-error').textContent = err.message;
+    } finally {
+      if ($('#save-attach-file-btn')) $('#save-attach-file-btn').disabled = false;
+    }
+  };
+}
+
+async function openMaterialEditModal(row, focusTest = null) {
+  if (!row) row = { data: { usage_status: 'Đang sử dụng', required_tests: '' } };
+  if (!row.data) row.data = {};
+  if (row.id && (!row.related || !row.files)) {
+    try {
+      const fullRow = await api('/records/' + row.id);
+      if (fullRow) row = fullRow;
+    } catch(e) { console.error(e); }
+  }
+  const testTypes = await getTestTypesList();
+  let reqTests = String(row.data?.required_tests || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const allAvailableTestTypes = [...new Set([...testTypes, ...reqTests])];
+
+  const related = row.related || [];
+  const existingReports = related.filter(r => r.module === 'reports');
+  const declarations = related.filter(r => ['declarations', 'material-declarations'].includes(r.module));
+  const existingDecl = declarations.find(r => (row.data.material_code && r.data.material_code === row.data.material_code) || (row.data.supplier && r.data.supplier === row.data.supplier));
+  const hasExistingDeclFile = existingDecl?.files && existingDecl.files.length > 0;
+  const existingDeclFile = hasExistingDeclFile ? existingDecl.files[0] : null;
+
+  function findLatestReport(testType) {
+    const matching = existingReports.filter(r => r.data.test_type === testType || String(r.data.test_type||'').toLowerCase() === testType.toLowerCase());
+    if (!matching.length) return null;
+    return matching.sort((a,b) => String(b.data.expiry_date || '9999').localeCompare(String(a.data.expiry_date || '9999')))[0];
+  }
+
+  let displayedTests = [...new Set([...reqTests, ...existingReports.map(r => r.data.test_type).filter(Boolean)])];
+  if (focusTest && !displayedTests.includes(focusTest)) {
+    displayedTests.push(focusTest);
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const nextYear = new Date();
+  nextYear.setFullYear(nextYear.getFullYear() + 1);
+  const nextYearStr = nextYear.toISOString().slice(0, 10);
+
+  function renderReportCard(testType) {
+    const rep = findLatestReport(testType);
+    const hasF = rep?.files && rep.files.length > 0;
+    const fId = hasF ? rep.files[0].id : null;
+    const fName = hasF ? rep.files[0].name : '';
+    const isRequired = reqTests.includes(testType);
+
+    return `
+      <div class="mat-report-card" data-test-type="${esc(testType)}" data-report-id="${rep?.id || ''}" data-report-version="${rep?.version || ''}" data-original-number="${esc(rep?.data?.report_id || '')}" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;display:flex;flex-direction:column;gap:8px;transition:border-color .2s">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-weight:700;font-size:13px;color:#1e40af;background:#eff6ff;padding:2px 8px;border-radius:4px;border:1px solid #bfdbfe">${esc(testType)}</span>
+            ${rep ? `<span class="badge ${rep.data?.result==='PASS'?'good':'bad'}" style="font-size:10px">${esc(rep.data?.result || 'PASS')}</span>` : `<span class="badge warn" style="font-size:10px">Chưa nộp báo cáo</span>`}
+            ${isRequired ? '<span style="font-size:10.5px;color:#059669;font-weight:600">✓ Bắt buộc</span>' : '<span style="font-size:10.5px;color:#94a3b8">(Tùy chọn)</span>'}
+          </div>
+          <div style="font-size:11px;color:#64748b;display:flex;align-items:center;gap:8px">
+            ${rep ? `<span>Bản ghi #${rep.id}</span>` : ''}
+            <button type="button" class="remove-test-card-btn link-button" data-test-type="${esc(testType)}" style="color:#ef4444;font-size:11px" title="Xóa khỏi danh sách báo cáo này">✕ Xóa</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1.5fr 1.2fr 0.95fr 0.95fr 0.85fr;gap:8px;align-items:end">
+          <label style="margin:0;font-size:11px;color:#475569">
+            Số báo cáo (Report ID)
+            <input type="text" class="rep-id-input" value="${esc(rep?.data?.report_id || '')}" placeholder="VD: VNHL2510035392EE" style="margin-top:3px;font-weight:600">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Phòng Lab
+            <input type="text" class="rep-lab-input" list="lab-suggestions" value="${esc(rep?.data?.lab || 'SGS Vietnam LTD')}" placeholder="SGS, CTI, Eurofins..." style="margin-top:3px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Ngày phát hành
+            <input type="date" class="rep-issue-input" value="${esc(rep?.data?.issue_date || todayStr)}" style="margin-top:3px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Hạn báo cáo
+            <input type="date" class="rep-expiry-input" value="${esc(rep?.data?.expiry_date || nextYearStr)}" style="margin-top:3px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Kết quả
+            <select class="rep-result-select" style="margin-top:3px">
+              <option value="PASS" ${(!rep || rep.data?.result==='PASS')?'selected':''}>PASS</option>
+              <option value="FAIL" ${(rep && rep.data?.result==='FAIL')?'selected':''}>FAIL</option>
+            </select>
+          </label>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;padding:6px 12px;font-size:11.5px">
+          <div class="rep-current-file">
+            ${hasF
+              ? `<span style="color:#059669;font-weight:600">📄 File PDF hiện có:</span> <a href="/api/evidence/${fId}" target="_blank" style="color:#2563eb;text-decoration:underline;font-weight:600">${esc(fName)}</a>`
+              : `<span style="color:#d97706">⚠️ Chưa có file PDF đính kèm</span>`
+            }
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:4px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:600;margin:0">
+              <input type="file" class="rep-file-input" accept=".pdf,.png,.jpg,.jpeg,.xlsx" style="display:none">
+              <span>${hasF ? '🔄 Thay file PDF khác' : '📎 Chọn tệp PDF'}</span>
+            </label>
+            <span class="rep-selected-file-label" style="font-size:11px;font-weight:600;color:#059669"></span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  const modalHtml = `
+    <datalist id="lab-suggestions">
+      <option value="SGS Vietnam LTD">
+      <option value="CTI (Centre Testing International)">
+      <option value="Eurofins">
+      <option value="Bureau Veritas (BV)">
+      <option value="TÜV Rheinland">
+      <option value="Intertek">
+    </datalist>
+    <datalist id="cat-suggestions">
+      <option value="Raw material">
+      <option value="Part">
+      <option value="Packaging">
+      <option value="Chemical">
+    </datalist>
+
+    <div class="mat-edit-all-in-one" style="display:flex;flex-direction:column;gap:14px;max-height:76vh;overflow-y:auto;padding-right:4px">
+      <!-- Card 1: Thông tin vật liệu -->
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px">
+        <div style="font-size:12.5px;font-weight:700;color:#0f172a;margin-bottom:10px;display:flex;align-items:center;gap:6px">
+          <span>📦 Thông tin hồ sơ vật liệu</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          <label style="margin:0;font-size:11px;color:#475569">
+            Mã vật liệu *
+            <input type="text" id="edit-mat-code" value="${esc(row.data.material_code||'')}" required style="margin-top:4px;font-weight:650">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Tên vật liệu *
+            <input type="text" id="edit-mat-name" value="${esc(row.data.material_name||'')}" required style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Phân loại (Category)
+            <input type="text" id="edit-mat-category" list="cat-suggestions" value="${esc(row.data.category||'Raw material')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Nhà cung cấp
+            <input type="text" id="edit-mat-supplier" value="${esc(row.data.supplier||'')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Dự án (Model)
+            <input type="text" id="edit-mat-project" value="${esc(row.data.project||'')}" style="margin-top:4px">
+          </label>
+          <label style="margin:0;font-size:11px;color:#475569">
+            Tình trạng sử dụng
+            <select id="edit-mat-status" style="margin-top:4px">
+              <option value="Đang sử dụng" ${row.data.usage_status==='Đang sử dụng'?'selected':''}>Đang sử dụng</option>
+              <option value="Tạm ngưng" ${row.data.usage_status==='Tạm ngưng'?'selected':''}>Tạm ngưng</option>
+              <option value="Ngừng sử dụng" ${row.data.usage_status==='Ngừng sử dụng'?'selected':''}>Ngừng sử dụng</option>
+            </select>
+          </label>
+
+          <!-- Ô chọn tệp Cam kết Declaration PDF của Nhà cung cấp -->
+          <div style="grid-column:span 3;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:2px">
+            <div>
+              <span style="font-weight:650;color:#1e40af;font-size:12px;display:flex;align-items:center;gap:5px">
+                📜 Tệp Cam kết của Nhà cung cấp (Supplier Declaration PDF)
+              </span>
+              <div id="decl-file-status" style="margin-top:2px;font-size:11px;color:#64748b">
+                ${hasExistingDeclFile ? `
+                  <span style="color:#059669;font-weight:600">✓ Đã có file:</span> <a href="/api/evidence/${existingDeclFile.id}" target="_blank" style="color:#2563eb;text-decoration:underline;font-weight:600">${esc(existingDeclFile.name)}</a>
+                ` : `
+                  <span style="color:#d97706">⚠️ Chưa có file Declaration đính kèm cho nhà cung cấp này</span>
+                `}
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <label style="cursor:pointer;display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:4px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;font-size:11px;font-weight:600;margin:0">
+                <input type="file" id="edit-mat-decl-file" accept=".pdf,.png,.jpg,.jpeg,.xlsx" style="display:none">
+                <span>${hasExistingDeclFile ? '🔄 Thay file Declaration khác' : '📎 Chọn file Declaration PDF'}</span>
+              </label>
+              <span id="decl-selected-label" style="font-size:11px;font-weight:600;color:#059669"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: Yêu cầu kiểm nghiệm (Required Tests) -->
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:12.5px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:6px">
+            <span>⚙️ Chọn các loại kiểm nghiệm bắt buộc</span>
+            <small style="font-weight:normal;color:#64748b">(Tick chọn để thêm vào danh mục báo cáo cần nộp)</small>
+          </div>
+          <a href="#/test-types" target="_blank" style="font-size:11px;color:#2563eb;text-decoration:none">⚙️ Quản lý loại kiểm nghiệm trong Cài đặt →</a>
+        </div>
+        <div id="mat-test-checkboxes" style="display:flex;flex-wrap:wrap;gap:6px">
+          ${allAvailableTestTypes.map(t => {
+            const isChecked = reqTests.includes(t);
+            return `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${isChecked?'#eff6ff':'#fff'};border:1px solid ${isChecked?'#3b82f6':'#cbd5e1'};border-radius:5px;font-size:11.5px;color:${isChecked?'#1e40af':'#334155'};font-weight:${isChecked?'600':'400'};user-select:none;margin:0">
+              <input type="checkbox" value="${esc(t)}" class="mat-test-type-toggle" ${isChecked?'checked':''} style="margin:0">
+              <span>${esc(t)}</span>
+            </label>`;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- Card 3: Báo cáo kiểm nghiệm phòng Lab (TRM) -->
+      <div style="background:#fff;border:1px solid #dce3ec;border-radius:8px;padding:14px 16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:#0f172a;display:flex;align-items:center;gap:6px">
+              <span>🔬 Báo cáo kiểm nghiệm phòng Lab (TRM)</span>
+            </div>
+            <p style="margin:2px 0 0;font-size:11px;color:#64748b">
+              Chỉnh sửa thông tin báo cáo, cập nhật hạn dùng, và tải lên file PDF trực tiếp tại đây.
+            </p>
+          </div>
+          <button type="button" id="btn-add-extra-test-report" style="font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid #cbd5e1;background:#f8fafc;color:#2563eb;font-weight:600;cursor:pointer">+ Thêm loại báo cáo khác</button>
+        </div>
+
+        <div id="mat-report-cards-list" style="display:flex;flex-direction:column;gap:10px">
+          ${displayedTests.map(t => renderReportCard(t)).join('')}
+        </div>
+      </div>
+
+      <div id="mat-edit-all-error" class="form-error"></div>
+    </div>
+  `;
+
+  openModal('✏️ Chỉnh sửa hồ sơ vật liệu & Báo cáo kiểm nghiệm: ' + (row.data.material_code || label(row)), modalHtml, `
+    <button data-close>Hủy</button>
+    <button type="button" class="primary" id="save-mat-all-btn" style="padding:6px 18px;font-size:12.5px;font-weight:600">💾 Lưu tất cả thay đổi</button>
+  `);
+
+  modal.style.maxWidth = '960px';
+  modal.style.width = '95vw';
+
+  function bindCardEvents(card) {
+    const fileInp = card.querySelector('.rep-file-input');
+    const fileLbl = card.querySelector('.rep-selected-file-label');
+    const repIdInp = card.querySelector('.rep-id-input');
+    const issueInp = card.querySelector('.rep-issue-input');
+    const expInp = card.querySelector('.rep-expiry-input');
+
+    if (fileInp) {
+      fileInp.onchange = () => {
+        if (fileInp.files[0]) {
+          const f = fileInp.files[0];
+          fileLbl.textContent = `✓ Đã chọn: ${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+          if (repIdInp && !repIdInp.value.trim()) {
+            repIdInp.value = f.name.replace(/\.[^/.]+$/, '');
+          }
+        }
+      };
+    }
+
+    if (issueInp && expInp) {
+      issueInp.onchange = () => {
+        if (issueInp.value) {
+          const d = new Date(issueInp.value);
+          d.setFullYear(d.getFullYear() + 1);
+          expInp.value = d.toISOString().slice(0, 10);
+        }
+      };
+    }
+  }
+
+  modal.querySelectorAll('.mat-report-card').forEach(bindCardEvents);
+
+  const declFileInput = modal.querySelector('#edit-mat-decl-file');
+  const declFileLabel = modal.querySelector('#decl-selected-label');
+  if (declFileInput && declFileLabel) {
+    declFileInput.onchange = () => {
+      if (declFileInput.files[0]) {
+        const f = declFileInput.files[0];
+        declFileLabel.textContent = `✓ Đã chọn: ${f.name} (${(f.size/1024).toFixed(1)} KB)`;
+      }
+    };
+  }
+
+  modal.querySelectorAll('.mat-test-type-toggle').forEach(chk => {
+    chk.onchange = () => {
+      const t = chk.value;
+      const lbl = chk.closest('label');
+      if (lbl) {
+        lbl.style.background = chk.checked ? '#eff6ff' : '#fff';
+        lbl.style.borderColor = chk.checked ? '#3b82f6' : '#cbd5e1';
+        lbl.style.color = chk.checked ? '#1e40af' : '#334155';
+        lbl.style.fontWeight = chk.checked ? '600' : '400';
+      }
+
+      if (chk.checked) {
+        if (!reqTests.includes(t)) reqTests.push(t);
+        const existingCard = modal.querySelector(`.mat-report-card[data-test-type="${CSS.escape(t)}"]`);
+        if (!existingCard) {
+          const list = modal.querySelector('#mat-report-cards-list');
+          const temp = document.createElement('div');
+          temp.innerHTML = renderReportCard(t);
+          const newCard = temp.firstElementChild;
+          list.appendChild(newCard);
+          bindCardEvents(newCard);
+          bindDeleteCard(newCard);
+        }
       } else {
-        if(compStatus!=='Non-Compliant') compStatus='Pending';
+        reqTests = reqTests.filter(x => x !== t);
+      }
+    };
+  });
+
+  function bindDeleteCard(card) {
+    const delBtn = card.querySelector('.remove-test-card-btn');
+    if (delBtn) {
+      delBtn.onclick = () => {
+        const testType = card.dataset.testType;
+        const repId = card.dataset.reportId;
+        if (repId) {
+          if (!confirm(`Xóa phần nhập báo cáo cho ${testType}? Báo cáo cũ vẫn được bảo lưu trong cơ sở dữ liệu.`)) return;
+        }
+        card.remove();
+        const chk = modal.querySelector(`.mat-test-type-toggle[value="${CSS.escape(testType)}"]`);
+        if (chk) {
+          chk.checked = false;
+          chk.dispatchEvent(new Event('change'));
+        }
+      };
+    }
+  }
+
+  modal.querySelectorAll('.mat-report-card').forEach(bindDeleteCard);
+
+  const addExtraBtn = modal.querySelector('#btn-add-extra-test-report');
+  if (addExtraBtn) {
+    addExtraBtn.onclick = () => {
+      const extraName = prompt('Nhập tên loại kiểm nghiệm mới (VD: PFAS, Antimony, SCCP, PAHs...):');
+      if (!extraName || !extraName.trim()) return;
+      const t = extraName.trim();
+      const existingCard = modal.querySelector(`.mat-report-card[data-test-type="${CSS.escape(t)}"]`);
+      if (existingCard) {
+        existingCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        existingCard.style.borderColor = '#2563eb';
+        return;
+      }
+      if (!reqTests.includes(t)) reqTests.push(t);
+      const list = modal.querySelector('#mat-report-cards-list');
+      const temp = document.createElement('div');
+      temp.innerHTML = renderReportCard(t);
+      const newCard = temp.firstElementChild;
+      list.appendChild(newCard);
+      bindCardEvents(newCard);
+      bindDeleteCard(newCard);
+      newCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      newCard.style.borderColor = '#2563eb';
+    };
+  }
+
+  if (focusTest) {
+    setTimeout(() => {
+      const targetCard = modal.querySelector(`.mat-report-card[data-test-type="${CSS.escape(focusTest)}"]`);
+      if (targetCard) {
+        targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetCard.style.borderColor = '#2563eb';
+        targetCard.style.boxShadow = '0 0 0 2px #bfdbfe';
+      }
+    }, 150);
+  }
+
+  const saveBtn = modal.querySelector('#save-mat-all-btn');
+  if (saveBtn) {
+    saveBtn.onclick = async () => {
+      const code = modal.querySelector('#edit-mat-code').value.trim();
+      const name = modal.querySelector('#edit-mat-name').value.trim();
+      const errBox = modal.querySelector('#mat-edit-all-error');
+
+      if (!code || !name) {
+        errBox.textContent = 'Vui lòng nhập đầy đủ Mã vật liệu và Tên vật liệu.';
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Đang lưu dữ liệu...';
+
+      try {
+        const checkedTests = Array.from(modal.querySelectorAll('.mat-test-type-toggle:checked')).map(c => c.value);
+
+        const updatedMatData = {
+          ...row.data,
+          material_code: code,
+          material_name: name,
+          category: modal.querySelector('#edit-mat-category').value.trim(),
+          supplier: modal.querySelector('#edit-mat-supplier').value.trim(),
+          project: modal.querySelector('#edit-mat-project').value.trim(),
+          usage_status: modal.querySelector('#edit-mat-status').value,
+          required_tests: checkedTests.join(', ')
+        };
+        delete updatedMatData.status;
+
+        if (row.id) {
+          await api('/records/' + row.id, {
+            method: 'PUT',
+            body: JSON.stringify({ module: 'materials', data: updatedMatData, version: row.version })
+          });
+        } else {
+          const createdMat = await api('/records', {
+            method: 'POST',
+            body: JSON.stringify({ module: 'materials', data: updatedMatData })
+          });
+          row.id = createdMat.id;
+        }
+
+        // Save Supplier Declaration file if selected
+        if (declFileInput && declFileInput.files && declFileInput.files[0]) {
+          const dFile = declFileInput.files[0];
+          const supName = updatedMatData.supplier || 'Supplier';
+          const declData = {
+            declaration_no: `${supName}_Declaration`,
+            material_code: code,
+            supplier: updatedMatData.supplier || '',
+            scope: `Cam kết tuân thủ của nhà cung cấp cho ${code}`,
+            issue_date: todayStr,
+            expiry_date: nextYearStr,
+            approval: 'Approved',
+            status: 'Completed'
+          };
+
+          let declRecId = existingDecl ? existingDecl.id : null;
+          if (declRecId) {
+            await api('/records/' + declRecId, {
+              method: 'PUT',
+              body: JSON.stringify({ module: 'material-declarations', data: declData, version: existingDecl.version })
+            });
+          } else {
+            const createdDecl = await api('/records', {
+              method: 'POST',
+              body: JSON.stringify({ module: 'material-declarations', data: declData })
+            });
+            declRecId = createdDecl.id;
+          }
+
+          const dBody = new FormData();
+          dBody.append('file', dFile);
+          await api('/records/' + declRecId + '/evidence', { method: 'POST', body: dBody });
+        }
+
+        const cards = modal.querySelectorAll('.mat-report-card');
+        let repCreated = 0;
+        let repUpdated = 0;
+
+        for (const card of cards) {
+          const testType = card.dataset.testType;
+          const repId = card.querySelector('.rep-id-input').value.trim();
+          const lab = card.querySelector('.rep-lab-input').value.trim();
+          const issueDate = card.querySelector('.rep-issue-input').value;
+          const expiryDate = card.querySelector('.rep-expiry-input').value;
+          const result = card.querySelector('.rep-result-select').value;
+          const fileInput = card.querySelector('.rep-file-input');
+          const hasNewFile = fileInput && fileInput.files && fileInput.files[0];
+          const existingRecId = card.dataset.reportId;
+          const existingVersion = Number(card.dataset.reportVersion);
+          const origNumber = card.dataset.originalNumber;
+
+          if (!repId && !hasNewFile) {
+            continue;
+          }
+
+          const repData = {
+            material_code: updatedMatData.material_code,
+            material_name: updatedMatData.material_name,
+            supplier: updatedMatData.supplier,
+            project: updatedMatData.project,
+            category: updatedMatData.category,
+            test_type: testType,
+            report_id: repId,
+            lab: lab,
+            result: result,
+            issue_date: issueDate,
+            expiry_date: expiryDate,
+            status: result === 'PASS' ? 'Completed' : 'NG'
+          };
+
+          let targetReportId = null;
+
+          if (existingRecId && (!origNumber || origNumber === repId)) {
+            await api('/records/' + existingRecId, {
+              method: 'PUT',
+              body: JSON.stringify({ module: 'reports', data: repData, version: existingVersion })
+            });
+            targetReportId = existingRecId;
+            repUpdated++;
+          } else {
+            const created = await api('/records', {
+              method: 'POST',
+              body: JSON.stringify({ module: 'reports', data: repData })
+            });
+            targetReportId = created.id;
+            repCreated++;
+          }
+
+          if (hasNewFile && targetReportId) {
+            const body = new FormData();
+            body.append('file', fileInput.files[0]);
+            await api('/records/' + targetReportId + '/evidence', { method: 'POST', body });
+          }
+        }
+
+        modal.close();
+        modal.style.maxWidth = '';
+        modal.style.width = '';
+        notify(`Đã lưu thay đổi hồ sơ vật liệu thành công! ${repCreated ? `(+${repCreated} báo cáo mới) ` : ''}${repUpdated ? `(${repUpdated} báo cáo đã cập nhật)` : ''}`);
+        render();
+      } catch(err) {
+        errBox.textContent = err.message;
+      } finally {
+        if (saveBtn) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = '💾 Lưu tất cả thay đổi';
+        }
+      }
+    };
+  }
+}
+
+const openUploadReportModal = openMaterialEditModal;
+
+function detailPage(row){
+  const config=catalog.modules[row.module];
+  const d=row.data;
+  const sections=config.fields.filter(f=>d[f.key]!==undefined&&d[f.key]!=='');
+  let actionsHtml=`<button data-route="${row.module}">← Danh sách</button>${can(row.module,'Edit')?'<button id="edit-record" class="primary">Chỉnh sửa</button>':''}${can(row.module,'Delete')?'<button id="archive-record" class="danger">Lưu trữ</button>':''}`;
+
+  if (row.module === 'materials') {
+    let req_tests = d.required_tests;
+    if(typeof req_tests === 'string') req_tests = req_tests.split(',').map(x => x.trim()).filter(Boolean);
+    if(!Array.isArray(req_tests)) req_tests = [];
+
+    const related = row.related || [];
+    const boms = related.filter(r => r.module === 'bom');
+    const testReports = related.filter(r => r.module === 'reports');
+    const fmdRecords = related.filter(r => r.module === 'fmd');
+    const declarations = related.filter(r => ['declarations', 'material-declarations'].includes(r.module));
+    const decl = declarations.find(r => (d.material_code && r.data.material_code === d.material_code) || (d.supplier && r.data.supplier === d.supplier));
+    const hasDeclFile = decl?.files && decl.files.length > 0;
+    const declFile = hasDeclFile ? decl.files[0] : null;
+    const declName = decl?.data?.declaration_no || (d.supplier ? `${d.supplier}_Declaration` : 'Declaration');
+
+    let reqValid = 0;
+    const activeReports = [];
+    const archivedReports = [];
+
+    req_tests.forEach(rt => {
+      const matching = testReports.filter(r => r.data.test_type === rt || String(r.data.test_type || '').toLowerCase() === rt.toLowerCase());
+      if (!matching.length) {
+        activeReports.push({ test: rt, status: 'Missing', statusText: 'Chưa có báo cáo', report: null });
+        return;
+      }
+      const sorted = matching.sort((a,b) => String(b.data.expiry_date || '9999').localeCompare(String(a.data.expiry_date || '9999')));
+      const latest = sorted[0];
+      const res = String(latest.data.result || '').toUpperCase();
+      const validity = latest.display_status;
+      if (res === 'FAIL' || ['Expired', 'Overdue', 'NG'].includes(validity)) {
+        activeReports.push({ test: rt, status: 'NG', statusText: res === 'FAIL' ? 'FAIL' : 'Quá hạn', report: latest });
+      } else if (res === 'PASS') {
+        reqValid++;
+        activeReports.push({ test: rt, status: validity === 'Expiring Soon' ? 'Expiring' : 'PASS', statusText: validity === 'Expiring Soon' ? 'Sắp hết hạn' : 'PASS', report: latest });
+      } else {
+        activeReports.push({ test: rt, status: 'Pending', statusText: 'Chờ đánh giá', report: latest });
+      }
+
+      for (let i = 1; i < sorted.length; i++) {
+        archivedReports.push({ test: rt, report: sorted[i], reason: 'Đã được thay thế bởi phiên bản mới' });
       }
     });
 
-    const infoHtmlUpdated = infoHtml.replace('</div></section>', `<div class="detail-item"><small>Compliance Status</small><div>${badge(compStatus)} ${testAlerts.length?`<small class="muted">(${testAlerts.join(', ')})</small>`:''}</div></div><div class="detail-item"><small>Required Tests</small><div>${reqValid} / ${req_tests.length} Valid</div></div></div></section>`);
-    const tabOverview = infoHtmlUpdated + bomsHtml;
-    
-    const allTests = ['RoHS', 'Halogen-Free', 'REACH / SVHC', 'PFOA & PFOS', 'VOC', 'PFAS', 'Khác'];
-    const checklistHtml = `<section class="card"><div class="card-header"><div><h3>Cấu hình Required Test</h3><small class="muted">Chỉ mục Required mới dùng đánh giá Compliance</small></div>${can('materials','Edit')?'<button class="primary" onclick="alert(&quot;Dùng nút Chỉnh sửa phía trên để cập nhật trường Yêu cầu kiểm nghiệm (cách nhau dấu phẩy)&quot;)">Chỉnh sửa</button>':''}</div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">${allTests.map(t=>`<label><input type="checkbox" disabled ${req_tests.includes(t)?'checked':''}> ${t}</label>`).join('')}</div></div></section>`;
-    
-    const tabCompliance = checklistHtml + `<section class="card"><div class="card-header"><div><h3>Hồ sơ tuân thủ & CTS</h3><small class="muted">Mã liên kết: ${esc(row.aliases.join(', '))}</small></div>${compAllowed?'<button class="primary" id="add-comp-report">+ Thêm hồ sơ</button>':''}</div><div class="card-body"><div class="folder-grid">${cTypes.map(type=>{const matches=compFiles.filter(r=>compType(r)===type);return `<div class="folder"><h3>${type}</h3><p>${matches.length} hồ sơ</p>${matches.map(r=>`<p><button class="link-button" data-open="${r.id}">${esc(r.data.report_id||r.data.document_no||r.data.substance||label(r))}</button><br>${badge(r.display_status)} ${r.data.expiry_date?dateText(r.data.expiry_date):''}</p>`).join('')}</div>`;}).join('')}</div>${!cTypes.length?empty('Chưa có hồ sơ tuân thủ'):''}</div></section>`;
-    const testFiles = related.filter(r => ['test-plan', 'xrf-plan', 'xrf-iqc', 'xrf-oqc', 'change-control', 'oqc-reports'].includes(r.module) || (r.module==='reports' && compType(r)==='Khác'));
-    const tTypes = Array.from(new Set(testFiles.map(r => title(r.module)))).sort();
-    let trendHtml = '';
-    if (related.some(r => r.module === 'xrf-iqc' || r.module === 'xrf-oqc')) {
-      trendHtml = `<div class="alert" style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;margin-bottom:0"><span>Vật liệu này có kết quả đo XRF. Xem biểu đồ đánh giá mức độ rủi ro và xu hướng thay đổi.</span><button class="primary" data-route="xrf-trend">Xem Biểu đồ Trend →</button></div>`;
+    const usedIds = new Set(activeReports.map(a => a.report?.id).filter(Boolean).concat(archivedReports.map(a => a.report?.id).filter(Boolean)));
+    const otherReports = testReports.filter(r => !usedIds.has(r.id));
+    otherReports.forEach(r => {
+      const validity = r.display_status;
+      if (['Expired', 'NG', 'Overdue'].includes(validity)) {
+        archivedReports.push({ test: r.data.test_type || 'Khác', report: r, reason: 'Báo cáo đã hết hạn' });
+      } else {
+        activeReports.push({ test: r.data.test_type || 'Khác', status: 'PASS', statusText: 'Bổ sung', report: r });
+      }
+    });
+
+    const isAllPass = req_tests.length > 0 && reqValid === req_tests.length;
+    const hasNG = activeReports.some(t => t.status === 'NG');
+    const compStatus = hasNG ? 'Non-Compliant' : isAllPass ? 'Compliant' : (req_tests.length ? 'Pending' : 'N/A');
+
+    let statusBadge = '';
+    if (compStatus === 'Compliant') {
+      statusBadge = `<span class="badge good" style="font-size:11px;font-weight:600">✓ Đạt chuẩn (HSF Compliant)</span>`;
+    } else if (compStatus === 'Non-Compliant') {
+      statusBadge = `<span class="badge bad" style="font-size:11px;font-weight:600">✕ Rủi ro (NG / Quá hạn)</span>`;
+    } else if (compStatus === 'Pending') {
+      statusBadge = `<span class="badge warn" style="font-size:11px;font-weight:600">⚠️ Chờ bổ sung (${reqValid}/${req_tests.length})</span>`;
+    } else {
+      statusBadge = `<span class="badge" style="font-size:11px;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">Không yêu cầu kiểm nghiệm</span>`;
     }
-    const tabTesting = trendHtml + `<section class="card"><div class="card-header"><div><h3>Kế hoạch & Kết quả kiểm nghiệm</h3></div>${can('test-plan','Create')?'<button class="primary" id="add-test-plan">+ Thêm kế hoạch</button>':''}</div><div class="card-body"><div class="folder-grid">${tTypes.map(type=>{const matches=testFiles.filter(r=>title(r.module)===type);return `<div class="folder"><h3>${type}</h3><p>${matches.length} mục</p>${matches.map(r=>`<p><button class="link-button" data-open="${r.id}">${esc(label(r))}</button><br>${badge(r.display_status)}</p>`).join('')}</div>`;}).join('')}</div>${!tTypes.length?empty('Chưa có dữ liệu kiểm nghiệm'):''}</div></section>`;
-    html+=`<div class="tabs" role="group" aria-label="Chi tiết vật liệu"><button class="active" data-material-tab="overview" aria-pressed="true">Tổng quan</button><button data-material-tab="suppliers" aria-pressed="false">Nhà cung cấp</button><button data-material-tab="compliance" aria-pressed="false">Hồ sơ tuân thủ</button><button data-material-tab="testing" aria-pressed="false">Kiểm nghiệm</button><button data-material-tab="history" aria-pressed="false">Lịch sử</button></div><div data-material-panel="overview">${tabOverview}</div><div data-material-panel="suppliers" hidden>${tabSuppliers}</div><div data-material-panel="compliance" hidden>${tabCompliance}</div><div data-material-panel="testing" hidden>${tabTesting}</div><div data-material-panel="history" hidden>${historyHtml}</div>`;
-}else{
+    const usageBadge = `<span class="badge ${d.usage_status==='Ngừng sử dụng'?'bad':d.usage_status==='Tạm ngưng'?'warn':'good'}" style="font-size:11px">${esc(d.usage_status || 'Đang sử dụng')}</span>`;
+
+    // Build Active Test Report Rows (Laboratory test reports only - TRM)
+    let reportRowsHtml = '';
+    activeReports.forEach(td => {
+      if (td.report) {
+        const r = td.report;
+        const hasF = r.files && r.files.length > 0;
+        const fId = hasF ? r.files[0].id : null;
+        const resPass = String(r.data.result || '').toUpperCase() === 'PASS';
+        reportRowsHtml += `<tr>
+          <td><b style="color:#0f172a">${esc(td.test)}</b></td>
+          <td>
+            ${hasF
+              ? `<a href="/api/evidence/${fId}" target="_blank" style="font-weight:650;color:#2563eb;text-decoration:none" title="Bấm để mở / tải file PDF về máy">${esc(r.data.report_id || label(r))} 📄</a>`
+              : `<button type="button" class="link-button" data-attach-report-file="${r.id}" data-report-name="${esc(r.data.report_id || label(r))}" style="font-weight:600;color:#334155" title="Chưa có file PDF đính kèm. Bấm để tải file lên!">${esc(r.data.report_id || label(r))} <small style="color:#d97706;font-size:10px;font-weight:normal">⚠️ Chưa có file</small></button>`
+            }
+          </td>
+          <td>${esc(r.data.lab || '—')}</td>
+          <td>${r.data.expiry_date ? dateText(r.data.expiry_date) : '—'}</td>
+          <td><span class="badge ${resPass?'good':'bad'}">${esc(r.data.result || 'PASS')}</span></td>
+          <td>${badge(r.display_status)}</td>
+          <td>
+            ${hasF
+              ? `<a href="/api/evidence/${fId}" target="_blank" class="badge good" style="font-size:10.5px;text-decoration:none;font-weight:600" title="Tải file PDF về máy">📥 Tải PDF</a>`
+              : `<button type="button" class="link-button" data-attach-report-file="${r.id}" data-report-name="${esc(r.data.report_id || label(r))}" style="font-size:11px;color:#2563eb;font-weight:600">+ Đính kèm PDF</button>`
+            }
+          </td>
+        </tr>`;
+      } else {
+        reportRowsHtml += `<tr style="background:#fffbeb">
+          <td><b style="color:#92400e">${esc(td.test)}</b></td>
+          <td colspan="4" style="color:#d97706;font-size:11.5px">⚠️ Chưa nộp báo cáo kiểm nghiệm cho mục này</td>
+          <td><span class="badge warn">Thiếu</span></td>
+          <td style="color:#94a3b8;font-size:11.5px">—</td>
+        </tr>`;
+      }
+    });
+
+    if (!reportRowsHtml) {
+      reportRowsHtml = req_tests.length
+        ? `<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Chưa có dữ liệu báo cáo kiểm nghiệm phòng Lab cho vật liệu này.</td></tr>`
+        : `<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Không yêu cầu báo cáo kiểm nghiệm cho vật liệu này.</td></tr>`;
+    }
+
+    const archivedHtml = `
+      <details style="margin:4px 8px 6px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;padding:4px 8px;font-size:11px">
+        <summary style="cursor:pointer;font-weight:600;color:#475569;display:flex;justify-content:space-between;align-items:center;user-select:none">
+          <span>🗄️ Kho lưu trữ & Lịch sử báo cáo cũ (${archivedReports.length})</span>
+          <small style="font-weight:normal;color:#94a3b8">Báo cáo các năm trước được lưu trữ tự động khi gia hạn</small>
+        </summary>
+        <div style="margin-top:6px;background:#fff;border-radius:4px;border:1px solid #e2e8f0;overflow:hidden">
+          ${archivedReports.length ? `
+            <table>
+              <thead>
+                <tr>
+                  <th>Loại test</th>
+                  <th>Số báo cáo cũ</th>
+                  <th>Phòng Lab</th>
+                  <th>Hạn dùng cũ</th>
+                  <th>Kết quả</th>
+                  <th>Trạng thái</th>
+                  <th>Lý do lưu trữ</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${archivedReports.map(ar => {
+                  const r = ar.report;
+                  const hasF = r.files && r.files.length > 0;
+                  const fId = hasF ? r.files[0].id : null;
+                  return `<tr style="opacity:0.85;background:#fcfcfc">
+                    <td><b>${esc(ar.test)}</b></td>
+                    <td>${hasF ? `<a href="/api/evidence/${fId}" target="_blank" style="color:#2563eb;font-weight:600;text-decoration:none">${esc(r.data.report_id || label(r))} 📄</a>` : `<button type="button" class="link-button" data-attach-report-file="${r.id}" data-report-name="${esc(r.data.report_id || label(r))}">${esc(r.data.report_id || label(r))} <small style="color:#f59e0b">⚠️ Chưa có file</small></button>`}</td>
+                    <td>${esc(r.data.lab || '—')}</td>
+                    <td>${r.data.expiry_date ? dateText(r.data.expiry_date) : '—'}</td>
+                    <td>${r.data.result ? `<span class="badge ${r.data.result==='PASS'?'good':'bad'}">${esc(r.data.result)}</span>` : '—'}</td>
+                    <td><span class="badge bad">${esc(r.display_status || 'Expired')}</span></td>
+                    <td style="color:#64748b;font-size:10.5px">${esc(ar.reason)}</td>
+                    <td>${hasF ? `<a href="/api/evidence/${fId}" target="_blank" class="badge" style="text-decoration:none;font-size:10px">📥 Tải PDF</a>` : `<button type="button" class="link-button" data-attach-report-file="${r.id}" data-report-name="${esc(r.data.report_id || label(r))}" style="font-size:10.5px;color:#2563eb">+ Đính kèm PDF</button>`}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          ` : '<div style="padding:10px;text-align:center;color:#94a3b8;font-size:11px">Chưa có báo cáo cũ nào trong kho lưu trữ (tất cả báo cáo hiện tại đều đang là phiên bản mới nhất).</div>'}
+        </div>
+      </details>
+    `;
+
+    // Build FMD & MSDS Rows (Chemical composition / CAS disclosure)
+    let fmdRowsHtml = '';
+    if (fmdRecords.length) {
+      fmdRowsHtml = fmdRecords.map(f => {
+        const fd = f.data || {};
+        const hasFlag = !!fd.flag;
+        return `<tr>
+          <td><code style="font-size:11px;background:#f1f5f9;padding:1px 5px;border-radius:4px;color:#0f172a">${esc(fd.cas || '—')}</code></td>
+          <td><b style="color:#0f172a">${esc(fd.substance || '—')}</b></td>
+          <td><span style="font-weight:600;color:#2563eb">${esc(fd.composition || '—')}</span></td>
+          <td>${hasFlag ? `<span class="badge bad" title="${esc(fd.investigation||'')}">⚠️ ${esc(fd.flag)}</span>` : '<span class="badge good">An toàn</span>'}</td>
+          <td>${fd.report_id ? `<span style="font-size:11px;color:#475569">${esc(fd.report_id)}</span>` : '—'}</td>
+          <td><button class="link-button" data-open="${f.id}">Xem FMD →</button></td>
+        </tr>`;
+      }).join('');
+    } else {
+      fmdRowsHtml = `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">Chưa có dữ liệu khai báo thành phần FMD & MSDS cho vật liệu này.</td></tr>`;
+    }
+
+    const historyHtml = `<section class="card detail-compact-card" style="margin-bottom:8px"><div class="card-header" style="padding:6px 14px"><h3 style="font-size:12px;margin:0">Evidence & phiên bản file (${row.evidence?.length||0})</h3>${can(row.module,'Upload')?'<label style="margin:0"><input type="file" id="evidence-file" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx,.txt" hidden><button id="upload-evidence" style="padding:2px 8px;font-size:11px">↑ Đính kèm file</button></label>':''}</div>${row.evidence.length?`<div class="table-scroll"><table><thead><tr><th>File</th><th>Người upload</th><th>Ngày</th><th>Dung lượng</th><th></th></tr></thead><tbody>${row.evidence.map(e=>`<tr><td title="SHA256: ${e.checksum}">${esc(e.name)}</td><td>${esc(e.uploader)}</td><td>${dateText(e.created_at)}</td><td>${(e.size/1024).toFixed(1)} KB</td><td>${['application/pdf','image/png','image/jpeg'].includes(e.mime)?`<button class="link-button" data-preview="${e.id}">Preview</button> · `:''}<a href="/api/evidence/${e.id}">Tải xuống</a></td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có file evidence','Chưa có tệp đính kèm nào.')}</section><section class="card detail-compact-card" style="margin:0"><div class="card-header" style="padding:6px 14px"><h3 style="font-size:12px;margin:0">Lịch sử thay đổi & Audit trail (${row.history?.length||0})</h3></div><div class="card-body" style="padding:8px 14px">${row.history.map(h=>`<details style="margin-top:4px"><summary style="font-size:11px">${timeText(h.at)} · ${esc(h.actor)} · ${esc(h.action)}</summary><div class="form-grid" style="gap:8px;margin-top:4px"><pre style="padding:6px;font-size:10.5px">Trước\n${esc(JSON.stringify(h.before,null,2))}</pre><pre style="padding:6px;font-size:10.5px">Sau\n${esc(JSON.stringify(h.after,null,2))}</pre></div></details>`).join('')||'<p class="muted" style="margin:0;font-size:11px">Chưa có thay đổi sau khi nhập dữ liệu nguồn.</p>'}</div></section>`;
+
+    const matActionsHtml = `${can(row.module,'Edit')?'<button id="edit-record" class="primary" style="font-size:12px;padding:4px 12px;display:flex;align-items:center;gap:4px">✏️ Chỉnh sửa</button>':''}${can(row.module,'Delete')?'<button id="archive-record" class="danger" style="font-size:12px;padding:4px 10px;display:flex;align-items:center;gap:4px" title="Lưu trữ / Vô hiệu hóa vật liệu này">🗑️ Lưu trữ</button>':''}`;
+
+    return `
+      <div class="detail-top-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:12px; flex-wrap:wrap">
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+          <button class="link-button" data-route="materials" style="font-size:12.5px; color:#475569; display:flex; align-items:center; gap:4px; font-weight:500">← Danh mục NVL</button>
+          <span style="color:#cbd5e1">/</span>
+          <b style="font-size:14px; color:#0f172a">${esc(d.material_code || label(row))}</b>
+          <span style="font-size:13px; color:#475569">— ${esc(d.material_name || '')}</span>
+          <span style="font-size:11px; color:var(--muted); margin-left:2px">(Rev ${row.version})</span>
+          ${usageBadge}
+          ${statusBadge}
+        </div>
+        <div style="display:flex; align-items:center; gap:8px">
+          <div class="head-actions" style="display:flex;gap:6px;flex-shrink:0">${matActionsHtml}</div>
+        </div>
+      </div>
+
+      <!-- Card 1: Thông tin vật liệu & Yêu cầu kiểm nghiệm -->
+      <section class="card detail-compact-card" style="margin-bottom:8px;flex-shrink:0">
+        <div class="card-header" style="padding:5px 14px"><h3 style="font-size:11.5px;margin:0">Thông tin hồ sơ vật liệu</h3></div>
+        <div class="card-body" style="padding:8px 14px">
+          <div class="mat-detail-grid">
+            <div class="detail-item"><small>Mã vật liệu</small><div style="font-weight:650;color:#0f172a">${esc(d.material_code || '—')}</div></div>
+            <div class="detail-item"><small>Tên vật liệu</small><div style="font-weight:650;color:#0f172a">${esc(d.material_name || '—')}</div></div>
+            <div class="detail-item"><small>Category</small><div>${esc(d.category || 'Raw material')}</div></div>
+            <div class="detail-item"><small>Nhà cung cấp</small><div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="font-weight:650;color:#0f172a">${esc(d.supplier || '—')}</span>
+                ${hasDeclFile ? `
+                  <a href="/api/evidence/${declFile.id}" target="_blank" style="font-size:10.5px;color:#2563eb;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:3px;background:#eff6ff;padding:1px 6px;border-radius:4px;border:1px solid #bfdbfe" title="Bấm để xem / tải về file Cam kết Declaration của Nhà cung cấp">
+                    📄 ${esc(declName)} 📥
+                  </a>
+                ` : d.supplier ? `
+                  <span style="font-size:10px;color:#94a3b8" title="Chưa có file cam kết Declaration. Bấm Chỉnh sửa để tải lên.">(Chưa có Declaration)</span>
+                ` : ''}
+              </div>
+            </div></div>
+            <div class="detail-item"><small>Dự án (Model)</small><div>${esc(d.project || '—')}</div></div>
+            <div class="detail-item"><small>Tình trạng sử dụng</small><div>${esc(d.usage_status || 'Đang sử dụng')}</div></div>
+            <div class="detail-item"><small>Kiểm nghiệm phòng Lab</small><div>${req_tests.length ? `<b>${reqValid} / ${req_tests.length}</b> Đạt chuẩn` : '<span style="color:#475569;font-weight:600">Không yêu cầu</span>'}</div></div>
+            <div class="detail-item"><small>Khai báo FMD / MSDS</small><div>${fmdRecords.length ? `<span class="badge good" style="font-size:10.5px">✓ Có FMD (${fmdRecords.length} chất)</span>` : `<span class="badge warn" style="font-size:10.5px">⚠️ Chưa có FMD / MSDS</span>`}</div></div>
+            <div class="detail-item" style="grid-column: span 2"><small>Yêu cầu kiểm nghiệm</small><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              ${req_tests.map(t=>`<span style="display:inline-block;padding:1px 6px;border-radius:4px;background:#eff6ff;color:#1e40af;font-size:10.5px;font-weight:600;border:1px solid #bfdbfe">${esc(t)}</span>`).join('') || '<span class="badge" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;font-size:10.5px">Không yêu cầu</span>'}
+              <button type="button" id="quick-edit-tests-btn" style="padding:1px 6px;font-size:10px;border-radius:4px;border:1px solid #cbd5e1;background:#fff;cursor:pointer;color:#2563eb;font-weight:500" title="Chọn loại báo cáo kiểm nghiệm từ Cài đặt">⚙️ Đổi</button>
+            </div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Middle Split Row: 2 Balanced Cards -->
+      <div class="mat-detail-split-row" style="display:flex;gap:10px;flex:1;min-height:0;margin-bottom:4px">
+        <!-- Cột trái: Segmented Switcher giữa Kiểm nghiệm phòng Lab (TRM) & Thành phần FMD & MSDS -->
+        <section class="card detail-compact-card" style="flex:1.25;min-width:0;display:flex;flex-direction:column;margin:0">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px;gap:8px">
+            <div style="display:inline-flex;gap:3px;background:#f1f5f9;padding:2px;border-radius:6px;border:1px solid #e2e8f0">
+              <button type="button" id="tab-btn-tests" style="border:none;background:#fff;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;color:#0f172a;box-shadow:0 1px 2px rgba(0,0,0,0.06)">
+                🔬 Báo cáo kiểm nghiệm (${testReports.length})
+              </button>
+              <button type="button" id="tab-btn-fmd" style="border:none;background:transparent;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:500;cursor:pointer;color:#64748b">
+                📋 Thành phần FMD & MSDS (${fmdRecords.length})
+              </button>
+            </div>
+            <div id="fmd-actions" style="display:none">
+              ${can('fmd','Create')?`<button class="primary" style="padding:2px 8px;font-size:10.5px" id="add-fmd-btn">+ Thêm FMD / MSDS</button>`:''}
+            </div>
+          </div>
+
+          <!-- Bảng 1: Báo cáo kiểm nghiệm phòng Lab -->
+          <div id="panel-tests" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto">
+            <div class="table-scroll" style="flex:1;min-height:0;overflow-y:auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Loại kiểm nghiệm</th>
+                    <th>Số báo cáo</th>
+                    <th>Phòng Lab</th>
+                    <th>Hạn báo cáo</th>
+                    <th>Kết quả</th>
+                    <th>Đánh giá</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${reportRowsHtml}
+                </tbody>
+              </table>
+            </div>
+            ${archivedHtml}
+          </div>
+
+          <!-- Bảng 2: Khai báo thành phần FMD & MSDS -->
+          <div id="panel-fmd" class="table-scroll" style="flex:1;min-height:0;overflow-y:auto;display:none">
+            <table>
+              <thead>
+                <tr>
+                  <th>CAS No.</th>
+                  <th>Tên hợp chất (Substance)</th>
+                  <th>Hàm lượng (%)</th>
+                  <th>Cảnh báo (Flag)</th>
+                  <th>Báo cáo đối chiếu</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${fmdRowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- BOM Usage -->
+        <section class="card detail-compact-card" style="flex:1;min-width:0;display:flex;flex-direction:column;margin:0">
+          <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;padding:5px 14px">
+            <h3 style="font-size:11.5px;margin:0">Sử dụng trong BOM / Sản phẩm (${boms.length})</h3>
+          </div>
+          <div class="table-scroll" style="flex:1;min-height:0;overflow-y:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Dự án / Model</th>
+                  <th>Mã thành phẩm</th>
+                  <th>Định mức</th>
+                  <th>Đơn vị</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${boms.map(b=>`<tr>
+                  <td><b>${esc(b.data?.project||'—')}</b></td>
+                  <td>${esc(b.data?.parent_code||'—')}</td>
+                  <td>${esc(b.data?.norm||'—')}</td>
+                  <td>${esc(b.data?.unit||'—')}</td>
+                  <td><button class="link-button" data-open="${b.id}">Xem BOM →</button></td>
+                </tr>`).join('') || '<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">Vật liệu chưa được liên kết trong BOM nào.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+      </div>
+
+      <!-- Bottom Collapsible: Evidence & Audit History -->
+      <details style="margin-top:2px;font-size:11px;color:#64748b;flex-shrink:0">
+        <summary style="cursor:pointer;font-weight:500;padding:2px 0">📁 Tệp bằng chứng Evidence (${row.evidence?.length||0}) & Lịch sử thay đổi (${row.history?.length||0})</summary>
+        <div style="margin-top:6px;max-height:160px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px">${historyHtml}</div>
+      </details>
+    `;
+  }
+
+  let chipsHtml=config.fields.some(f=>f.key==='dri')?`<div class="chips" style="display:inline-flex;gap:6px">${badge(row.display_status)}<span class="badge">${esc(row.module)}</span><span class="badge">DRI: ${esc(d.dri||'Chưa phân công')}</span></div>`:'';
+  let html=`<div class="detail-top-bar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:12px"><div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap"><span style="font-size:11.5px; color:var(--muted)">${esc(config.title)} · Rev ${row.version} · ${timeText(row.updated_at)}</span>${chipsHtml}</div><div class="head-actions" style="display:flex;gap:6px;flex-shrink:0">${actionsHtml}</div></div>`;
+  if(row.conflicts?.length)html+=`<div class="alert" style="margin-bottom:8px;padding:6px 12px;font-size:11.5px">Mapping FMD / TRM không khớp: ${row.conflicts.map(c=>`${esc(c.test_type)}: FMD ${esc(c.fmd.join(', '))}; TRM ${esc(c.trm.join(', '))}`).join(' · ')}. Cần xác minh báo cáo gốc.</div>`;
+  if(row.module==='capa'){const stages=[['issue','Issue'],['containment','Containment'],['root_cause','Root Cause'],['corrective','Corrective Action'],['evidence','Evidence'],['verification','Verification'],['closure','Closure']];html+=`<div class="timeline" style="margin-bottom:8px;padding-bottom:8px">${stages.map(([k,t])=>`<div class="timeline-step ${(k==='evidence'?row.evidence.length:d[k])?'done':''}"><b>${t}</b><small>${(k==='evidence'?row.evidence.length:d[k])?'Đã ghi nhận':'Chưa ghi nhận'}</small></div>`).join('')}</div>`;}
+  let infoHtml=`<section class="card detail-compact-card" style="margin-bottom:8px;flex-shrink:0"><div class="card-header"><h3 style="font-size:12px;margin:0">Thông tin hồ sơ</h3></div><div class="card-body"><div class="detail-grid" style="grid-template-columns:repeat(4,1fr);gap:8px 14px">${sections.map(f=>`<div class="detail-item"><small style="display:block;font-size:10px;color:var(--muted);margin-bottom:2px;text-transform:uppercase;font-weight:600">${esc(f.label)}</small><div style="font-size:11.5px">${esc(d[f.key])}</div></div>`).join('')}</div>${d._source?`<div class="source" style="margin-top:12px;padding:8px 12px">${sourceText(d._source)}<details><summary>Xem ô nguồn / công thức</summary><pre style="padding:8px">${esc(JSON.stringify(d._source,null,2))}</pre></details></div>`:''}${d._sources?`<details style="margin-top:8px"><summary>${d._sources.length} dòng nguồn tạo hồ sơ vật liệu</summary>${d._sources.map(s=>`<p class="source" style="padding:4px 8px;margin:3px 0">${sourceText(s)}</p>`).join('')}</details>`:''}</div></section>`;
+  const historyHtml=`<section class="card detail-compact-card" style="margin-bottom:8px"><div class="card-header"><h3 style="font-size:12px;margin:0">Evidence & phiên bản file</h3>${can(row.module,'Upload')?'<label style="margin:0"><input type="file" id="evidence-file" accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx,.txt" hidden><button id="upload-evidence" style="padding:2px 8px;font-size:11px">↑ Đính kèm file</button></label>':''}</div>${row.evidence.length?`<div class="table-scroll"><table><thead><tr><th>File</th><th>Người upload</th><th>Ngày</th><th>Dung lượng</th><th></th></tr></thead><tbody>${row.evidence.map(e=>`<tr><td title="SHA256: ${e.checksum}">${esc(e.name)}</td><td>${esc(e.uploader)}</td><td>${dateText(e.created_at)}</td><td>${(e.size/1024).toFixed(1)} KB</td><td>${['application/pdf','image/png','image/jpeg'].includes(e.mime)?`<button class="link-button" data-preview="${e.id}">Preview</button> · `:''}<a href="/api/evidence/${e.id}">Tải xuống</a></td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có file evidence','File gốc trong workbook không tự động được coi là evidence đính kèm.')}</section><section class="card detail-compact-card" style="margin:0"><div class="card-header"><h3 style="font-size:12px;margin:0">Lịch sử thay đổi & Audit trail</h3></div><div class="card-body" style="padding:8px 14px">${row.history.map(h=>`<details style="margin-top:6px"><summary>${timeText(h.at)} · ${esc(h.actor)} · ${esc(h.action)}</summary><div class="form-grid" style="gap:8px"><pre style="padding:6px">Trước\n${esc(JSON.stringify(h.before,null,2))}</pre><pre style="padding:6px">Sau\n${esc(JSON.stringify(h.after,null,2))}</pre></div></details>`).join('')||'<p class="muted">Chưa có thay đổi sau khi nhập dữ liệu nguồn.</p>'}</div></section>`;
   html+=infoHtml;
   if(row.module==='suppliers')html+=supplierContext(row);
-  if(row.module==='bom')html+=`<section class="card"><div class="card-header"><h3>Nguyên vật liệu trong BOM</h3></div>${rowTable(row.materials||[])}</section>`;
-  if(row.evaluation)html+=`<section class="card"><div class="card-header"><h3>Đánh giá XRF theo Control Limit</h3>${badge(row.evaluation.status)}</div><div class="table-scroll"><table><thead><tr><th>Chất</th><th>Kết quả ppm</th><th>Giới hạn ppm</th><th>Quy tắc</th><th>Kết luận</th></tr></thead><tbody>${row.evaluation.checks.map(c=>`<tr><td>${esc(c.element)}</td><td>${c.value??'Chưa có'}</td><td>${c.limit??'Chưa khai báo'}</td><td>${esc(c.rule)}</td><td>${badge(c.status)}</td></tr>`).join('')}</tbody></table></div><div class="card-body muted"><small>${esc(row.evaluation.basis)}</small></div></section>`;
+  if(row.module==='bom')html+=`<section class="card detail-compact-card"><div class="card-header"><h3 style="font-size:12px;margin:0">Nguyên vật liệu trong BOM</h3></div>${rowTable(row.materials||[])}</section>`;
+  if(row.evaluation)html+=`<section class="card detail-compact-card"><div class="card-header"><h3 style="font-size:12px;margin:0">Đánh giá XRF theo Control Limit</h3>${badge(row.evaluation.status)}</div><div class="table-scroll"><table><thead><tr><th>Chất</th><th>Kết quả ppm</th><th>Giới hạn ppm</th><th>Quy tắc</th><th>Kết luận</th></tr></thead><tbody>${row.evaluation.checks.map(c=>`<tr><td>${esc(c.element)}</td><td>${c.value??'Chưa có'}</td><td>${c.limit??'Chưa khai báo'}</td><td>${esc(c.rule)}</td><td>${badge(c.status)}</td></tr>`).join('')}</tbody></table></div><div class="card-body muted" style="padding:6px 14px"><small>${esc(row.evaluation.basis)}</small></div></section>`;
   html+=historyHtml;
+  return html;
 }
-return html;}
 
 
-function formField(f,value=''){const attrs=`name="${esc(f.key)}" ${f.required?'required':''}`;let control;if(f.type==='select')control=`<select ${attrs}><option value="">Chọn…</option>${f.options.map(o=>`<option value="${esc(o)}" ${String(value)===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;else if(f.type==='textarea')control=`<textarea ${attrs} maxlength="10000">${esc(value)}</textarea>`;else control=`<input ${attrs} type="${f.type}" ${f.type==='number'?'min="0" step="any"':''} value="${esc(value)}" maxlength="10000">`;return `<label class="${f.type==='textarea'?'wide':''}">${esc(f.label)}${f.required?' *':''}${control}</label>`;}
-function recordForm(module,row=null,defaults={}){const config=catalog.modules[module];openModal((row?'Chỉnh sửa: ':'Thêm: ')+config.title,`<form id="record-form"><div class="form-grid">${config.fields.map(f=>formField(f,row?.data[f.key]??defaults[f.key]??(f.key==='status'?'Pending':f.key==='dri'?user.name:''))).join('')}</div><div id="record-error" class="form-error" role="alert"></div></form>`,`<button data-cancel>Hủy</button><button type="submit" form="record-form" class="primary" id="save-record">Lưu hồ sơ</button>`);modal.querySelector('[data-cancel]').onclick=()=>modal.close();$('#record-form').onsubmit=async e=>{e.preventDefault();$('#save-record').disabled=true;try{const data=Object.fromEntries(new FormData(e.target));const result=await api('/records'+(row?'/'+row.id:''),{method:row?'PUT':'POST',body:JSON.stringify({module,data,version:row?.version})});modal.close();notify('Đã lưu hồ sơ và audit history.');goto('record/'+result.id);}catch(error){$('#record-error').textContent=error.message;}finally{if($('#save-record'))$('#save-record').disabled=false;}};}
+function formField(f,value='',testTypesList=[]){
+  if (f.key === 'required_tests') {
+    const selected = String(value || '').split(',').map(s => s.trim()).filter(Boolean);
+    const options = [...new Set([...testTypesList, ...selected])];
+    return `<div class="wide" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600;color:#334155">${esc(f.label)} <small style="color:var(--muted);font-weight:normal">(Chọn từ Cài đặt)</small></span>
+        <button type="button" class="link-button" onclick="window.open('#/test-types')" style="font-size:11px;color:#2563eb">⚙️ Cấu hình loại kiểm nghiệm →</button>
+      </div>
+      <div class="test-type-selector-box" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:#f8fafc;border:1px solid #dce3ec;border-radius:6px">
+        ${options.map(t => {
+          const isChecked = selected.includes(t);
+          return `<label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:${isChecked?'#eff6ff':'#fff'};border:1px solid ${isChecked?'#3b82f6':'#cbd5e1'};border-radius:5px;font-size:11.5px;color:${isChecked?'#1e40af':'#334155'};font-weight:${isChecked?'600':'400'};user-select:none;margin:0">
+            <input type="checkbox" value="${esc(t)}" class="test-type-toggle" ${isChecked?'checked':''} style="margin:0">
+            <span>${esc(t)}</span>
+          </label>`;
+        }).join('')}
+      </div>
+      <input type="hidden" name="required_tests" id="field-required-tests" value="${esc(selected.join(', '))}">
+    </div>`;
+  }
+  const attrs=`name="${esc(f.key)}" ${f.required?'required':''}`;
+  let control;
+  if(f.type==='select')control=`<select ${attrs}><option value="">Chọn…</option>${f.options.map(o=>`<option value="${esc(o)}" ${String(value)===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  else if(f.type==='textarea')control=`<textarea ${attrs} maxlength="10000">${esc(value)}</textarea>`;
+  else control=`<input ${attrs} type="${f.type}" ${f.type==='number'?'min="0" step="any"':''} value="${esc(value)}" maxlength="10000">`;
+  return `<label class="${f.type==='textarea'?'wide':''}">${esc(f.label)}${f.required?' *':''}${control}</label>`;
+}
+
+async function recordForm(module,row=null,defaults={}){
+  const config=catalog.modules[module];
+  let testTypesList = [];
+  if (module === 'materials' || config.fields.some(f => f.key === 'required_tests')) {
+    testTypesList = await getTestTypesList();
+  }
+  openModal((row?'Chỉnh sửa: ':'Thêm: ')+config.title,`<form id="record-form"><div class="form-grid">${config.fields.map(f=>formField(f,row?.data[f.key]??defaults[f.key]??(f.key==='status'?'Pending':f.key==='dri'?user.name:''),testTypesList)).join('')}</div><div id="record-error" class="form-error" role="alert"></div></form>`,`<button data-cancel>Hủy</button><button type="submit" form="record-form" class="primary" id="save-record">Lưu hồ sơ</button>`);
+  modal.querySelectorAll('.test-type-toggle').forEach(chk => {
+    chk.onchange = () => {
+      const checked = Array.from(modal.querySelectorAll('.test-type-toggle:checked')).map(c => c.value);
+      const hidden = modal.querySelector('#field-required-tests');
+      if (hidden) hidden.value = checked.join(', ');
+      const lbl = chk.closest('label');
+      if (lbl) {
+        lbl.style.background = chk.checked ? '#eff6ff' : '#fff';
+        lbl.style.borderColor = chk.checked ? '#3b82f6' : '#cbd5e1';
+        lbl.style.color = chk.checked ? '#1e40af' : '#334155';
+        lbl.style.fontWeight = chk.checked ? '600' : '400';
+      }
+    };
+  });
+  modal.querySelector('[data-cancel]').onclick=()=>modal.close();
+  $('#record-form').onsubmit=async e=>{
+    e.preventDefault();
+    $('#save-record').disabled=true;
+    try{
+      const data=Object.fromEntries(new FormData(e.target));
+      const result=await api('/records'+(row?'/'+row.id:''),{method:row?'PUT':'POST',body:JSON.stringify({module,data,version:row?.version})});
+      modal.close();
+      notify('Đã lưu hồ sơ thành công.');
+      goto('record/'+result.id);
+    }catch(error){
+      $('#record-error').textContent=error.message;
+    }finally{
+      if($('#save-record'))$('#save-record').disabled=false;
+    }
+  };
+}
 
 function groupPage(id){const group=catalog.groups.find(g=>g.id===id);if(!group)return empty('Không tìm thấy nhóm');return head(group.name,'')+`<div class="folder-grid">${group.items.filter(i=>!catalog.modules[i.id]||can(i.id,'View')).map(i=>`<button class="folder" data-route="${i.id}"><h3>${esc(i.name)}</h3><p>${esc(catalog.modules[i.id]?.description||'Mở danh sách và quản lý hồ sơ')}</p></button>`).join('')}</div>`;}
 async function importsPage(){const data=await api('/imports');return head('Nguồn Excel & đối chiếu','',user.role==='Admin'?'<button class="primary" id="import-workbooks">Kiểm tra / nhập workbook mới</button>':'')+`<div class="folder-grid">${data.files.map(f=>`<article class="folder"><h3>${esc(f.file)}</h3><p>Nhập ${timeText(f.at)}</p><p>${Object.entries(f.summary.counts).map(([m,n])=>`${esc(title(m))}: <b>${n}</b>`).join('<br>')}</p><details><summary>${f.summary.sheets.length} sheet đã đọc</summary>${f.summary.sheets.map(s=>`<p>${esc(s.name)} · ${s.populated_rows} dòng có nội dung / ${s.rows} dòng định dạng</p>`).join('')}<p>SHA256: ${esc(f.checksum)}</p></details>${['Admin','QA Manager','Auditor'].includes(user.role)?`<a href="/api/imports/${f.id}/download">Tải workbook nguồn</a>`:''}</article>`).join('')}</div><section class="card" style="margin-top:20px"><div class="card-header"><h3>Chênh lệch FMD / TRM cần xác minh</h3></div>${data.conflicts.length?`<div class="table-scroll"><table><thead><tr><th>Vật liệu</th><th>Test</th><th>FMD</th><th>TRM</th><th>Trạng thái</th></tr></thead><tbody>${data.conflicts.map(c=>`<tr><td>${esc(c.material_code)}</td><td>${esc(c.test_type)}</td><td>${esc(c.fmd.join(', '))}</td><td>${esc(c.trm.join(', '))}</td><td>${badge('Warning')}</td></tr>`).join('')}</tbody></table></div>`:empty('Không phát hiện chênh lệch')}</section><section class="card"><div class="card-header"><h3>Chất lượng dữ liệu nguồn</h3></div><div class="card-body">${data.files.flatMap(f=>f.summary.issues.map(i=>`<div class="alert">${esc(f.file)} · ${esc(i.sheet)} · ${esc(i.cell)}: <b>${esc(i.value)}</b></div>`)).join('')||'<p>Không có lỗi ô Excel được ghi nhận.</p>'}<p class="muted">IQC Trend được tính lại từ dữ liệu kết quả IQC/OQC, không lấy giá trị pivot cache làm dữ liệu độc lập. Các ô thiếu giới hạn hoặc thiếu kết quả giữ trạng thái Pending.</p></div></section>`;}
@@ -480,7 +2438,18 @@ async function rolesPage(){roleSettings=await api('/settings/permissions');const
 function roleMatrix(role){return `<table><thead><tr><th>Module</th>${['View','Create','Edit','Delete','Upload','Approve','Close'].map(a=>`<th>${a}</th>`).join('')}</tr></thead><tbody>${Object.keys(catalog.modules).map(m=>`<tr><td>${esc(title(m))}</td>${['View','Create','Edit','Delete','Upload','Approve','Close'].map(a=>`<td><input type="checkbox" aria-label="${esc(title(m)+' '+a)}" data-permission="${m}:${a}" ${roleSettings[role]?.[m]?.[a]?'checked':''} ${user.role==='Admin'?'':'disabled'}></td>`).join('')}</tr>`).join('')}</tbody></table>`;}
 async function settingsPage(key){const data=await api('/settings/'+key);let form='';if(key==='notifications')form=`<label>Ngưỡng cảnh báo<select name="days">${[30,60,90].map(n=>`<option value="${n}" ${data.days===n?'selected':''}>${n} ngày</option>`).join('')}</select></label>`+[['reports','Test Report sắp hết hạn'],['training','Training sắp hết hạn'],['capa','CAPA quá hạn'],['documents','Document đến hạn review'],['compliance','Compliance cần renewal']].map(([k,t])=>`<label><input type="checkbox" name="${k}" ${data[k]!==false?'checked':''}>${t}</label>`).join('');else if(key==='retention')form=[['documents','Tài liệu'],['samples','Sample'],['reports','Test Report'],['audit','Audit Record'],['training','Training Record']].map(([k,t])=>`<label>${t} (năm)<input type="number" name="${k}" min="1" max="100" value="${data[k]||5}" required></label>`).join('');else form=[['site_name','Tên hệ thống'],['factory','Nhà máy'],['timezone','Múi giờ hiển thị']].map(([k,t])=>`<label>${t}<input name="${k}" value="${esc(data[k])}" maxlength="200" required ${k==='timezone'?'readonly':''}></label>`).join('');return head(names[key],'')+`<section class="card"><div class="card-body"><form id="settings-form"><fieldset style="border:0;padding:0" ${user.role!=='Admin'?'disabled':''}><div class="form-grid">${form}</div>${user.role==='Admin'?'<button class="primary" type="submit">Lưu cài đặt</button>':'<p class="muted">Chỉ Admin được thay đổi cấu hình.</p>'}</fieldset></form></div></section>`;}
 
-function bindCommon(root=content){root.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>goto('record/'+b.dataset.open));root.querySelectorAll('[data-route]').forEach(b=>b.onclick=()=>goto(b.dataset.route));}
+function bindCommon(root=content){
+  root.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>goto('record/'+b.dataset.open));
+  root.querySelectorAll('[data-route]').forEach(b=>b.onclick=()=>goto(b.dataset.route));
+  root.querySelectorAll('[data-status-filter]').forEach(b=>{
+    b.onclick=(e)=>{
+      e.preventDefault();
+      listState.status=b.dataset.statusFilter??'';
+      listState.page=1;
+      render();
+    };
+  });
+}
 function bindPage(id){bindCommon();
 if(id==='inspection-plans'){
   content.querySelectorAll('[data-plan-page]').forEach(b=>b.onclick=()=>{listState.page=Number(b.dataset.planPage);return render();});
@@ -500,7 +2469,14 @@ const gs = document.querySelector('.global-search'); if(gs) gs.style.display = i
 if(catalog.modules[id] || id==='bom' || id==='xrf'){
   const module = $('#filters')?.dataset?.module || $('#export')?.dataset?.module || id;
   if($('#filters')) $('#filters').onsubmit=e=>{e.preventDefault();Object.assign(listState,Object.fromEntries(new FormData(e.target)),{page:1});render();};
-  if($('#page-size-select')) $('#page-size-select').onchange=e=>{listState.size=Number(e.target.value);listState.page=1;render();};
+  if($('#page-size-select')) $('#page-size-select').onchange=e=>{
+    const val = Number(e.target.value);
+    listState.size = val;
+    if(module==='suppliers'||id==='suppliers') listState.supplierSize = val;
+    if(module==='materials'||id==='materials') listState.materialSize = val;
+    listState.page = 1;
+    render();
+  };
   if($('#reset-filter')) $('#reset-filter').onclick=()=>{listState={page:1,q:'',status:'',project:'',category:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||getOptimalPageSize()};render();};
   if($('#project-filter')) $('#project-filter').onchange=()=>{listState.project=$('#project-filter').value;listState.page=1;render();};
   if($('#category-filter')) $('#category-filter').onchange=()=>{listState.category=$('#category-filter').value;listState.page=1;render();};
@@ -512,8 +2488,28 @@ if(catalog.modules[id] || id==='bom' || id==='xrf'){
   if($('#next-page')) $('#next-page').onclick=()=>{listState.page=(listState.page||1)+1;render();};
   content.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{listState.page=Number(b.dataset.page);render();});
   document.querySelectorAll('[data-sort]').forEach(b=>b.onclick=()=>{listState.direction=listState.sort===b.dataset.sort&&listState.direction==='asc'?'desc':'asc';listState.sort=b.dataset.sort;render();});
-  $('#add-record')?.addEventListener('click',()=>recordForm(module));
+  $('#add-record')?.addEventListener('click',()=>module==='suppliers'?openSupplierEvaluationModal():module==='materials'?openMaterialEditModal():recordForm(module));
   if($('#export')) $('#export').onclick=()=>{const q=new URLSearchParams({q:listState.q,status:listState.status,start:listState.start,end:listState.end});location.href='/api/export/'+module+'?'+q;};
+  if(id==='suppliers'||module==='suppliers'){
+    content.querySelectorAll('.evaluate-supplier-btn').forEach(b=>{
+      b.onclick=()=>{
+        const sid=Number(b.dataset.supplierId);
+        const sRow=window.psSuppliersMap?.[sid];
+        if(sRow)openSupplierEvaluationModal(sRow);
+      };
+    });
+    $('#add-supplier-eval-btn')?.addEventListener('click',()=>openSupplierEvaluationModal());
+  }
+  if(id==='materials'||module==='materials'){
+    content.querySelectorAll('.edit-material-btn').forEach(b=>{
+      b.onclick=async()=>{
+        const mid=Number(b.dataset.materialId);
+        const mRow=window.psMaterialsMap?.[mid];
+        if(mRow) openMaterialEditModal(mRow);
+      };
+    });
+    $('#add-material-btn')?.addEventListener('click',()=>openMaterialEditModal());
+  }
 }
 if(id==='product-bom'){
   content.querySelectorAll('[data-bom-page]').forEach(b=>b.onclick=()=>{window.psBomMatPage=Number(b.dataset.bomPage);render();});
@@ -529,7 +2525,7 @@ if(id==='users'){
   if($('#next-page')) $('#next-page').onclick=()=>{listState.page=(listState.page||1)+1;render();};
   if($('#page-size-select')) $('#page-size-select').onchange=e=>{listState.size=Number(e.target.value);listState.page=1;render();};
 }
-if(id==='record'){const row=currentDetail;bindSupplyContext(row);$('#edit-record')?.addEventListener('click',()=>recordForm(row.module,row));$('#archive-record')?.addEventListener('click',()=>confirmAction('Lưu trữ hồ sơ này? Hồ sơ sẽ rời danh sách nhưng audit history vẫn được giữ.',async()=>{await api('/records/'+row.id+'?version='+row.version,{method:'DELETE'});goto(row.module);}));$('#upload-evidence')?.addEventListener('click',()=>$('#evidence-file').click());$('#evidence-file')?.addEventListener('change',async e=>{if(!e.target.files[0])return;const body=new FormData();body.append('file',e.target.files[0]);try{await api('/records/'+row.id+'/evidence',{method:'POST',body});notify('Đã lưu evidence.');render();}catch(error){notify(error.message);}});document.querySelectorAll('[data-preview]').forEach(b=>b.onclick=()=>openModal('Preview evidence',`<iframe title="Nội dung evidence" class="preview-frame" src="/api/evidence/${b.dataset.preview}?inline=true"></iframe>`));$('#add-material-report')?.addEventListener('click',()=>{openModal('Thêm báo cáo / Tải file', `<div class="folder-grid"><button data-quick="reports" class="folder"><h3>Test Report</h3><p>RoHS, Halogen-Free...</p></button><button data-quick="documents" class="folder"><h3>Document</h3><p>SDS, MSDS, FMD...</p></button></div>`);modal.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{recordForm(b.dataset.quick,null,{material_code:row.data.material_code});});});}
+if(id==='record'){const row=currentDetail;bindSupplyContext(row);$('#edit-record')?.addEventListener('click',()=>row.module==='materials'?openMaterialEditModal(row):row.module==='suppliers'?openSupplierEvaluationModal(row):recordForm(row.module,row));$('#edit-supplier-eval-btn')?.addEventListener('click',()=>openSupplierEvaluationModal(row));$('#archive-record')?.addEventListener('click',()=>confirmAction('Lưu trữ hồ sơ này? Hồ sơ sẽ rời danh sách nhưng audit history vẫn được giữ.',async()=>{await api('/records/'+row.id+'?version='+row.version,{method:'DELETE'});goto(row.module);}));$('#upload-evidence')?.addEventListener('click',()=>$('#evidence-file').click());$('#evidence-file')?.addEventListener('change',async e=>{if(!e.target.files[0])return;const body=new FormData();body.append('file',e.target.files[0]);try{await api('/records/'+row.id+'/evidence',{method:'POST',body});notify('Đã lưu evidence.');render();}catch(error){notify(error.message);}});document.querySelectorAll('[data-preview]').forEach(b=>b.onclick=()=>openModal('Preview evidence',`<iframe title="Nội dung evidence" class="preview-frame" src="/api/evidence/${b.dataset.preview}?inline=true"></iframe>`));$('#add-material-report')?.addEventListener('click',()=>{openModal('Thêm báo cáo / Tải file', `<div class="folder-grid"><button data-quick="reports" class="folder"><h3>Test Report</h3><p>RoHS, Halogen-Free...</p></button><button data-quick="documents" class="folder"><h3>Document</h3><p>SDS, MSDS, FMD...</p></button></div>`);modal.querySelectorAll('[data-quick]').forEach(b=>b.onclick=()=>{recordForm(b.dataset.quick,null,{material_code:row.data.material_code});});});$('#quick-edit-tests-btn')?.addEventListener('click',()=>openMaterialEditModal(row));$('#add-material-report-btn')?.addEventListener('click',()=>openMaterialEditModal(row));content.querySelectorAll('[data-upload-test]').forEach(b=>b.onclick=()=>openMaterialEditModal(row,b.dataset.uploadTest));content.querySelectorAll('[data-attach-report-file]').forEach(b=>b.onclick=()=>openAttachFileModal(b.dataset.attachReportFile,b.dataset.reportName));const tabTests=$('#tab-btn-tests'),tabFmd=$('#tab-btn-fmd'),panelTests=$('#panel-tests'),panelFmd=$('#panel-fmd'),actTests=$('#tests-actions'),actFmd=$('#fmd-actions');if(tabTests&&tabFmd){tabTests.onclick=()=>{tabTests.style.background='#fff';tabTests.style.color='#0f172a';tabTests.style.fontWeight='600';tabTests.style.boxShadow='0 1px 2px rgba(0,0,0,0.06)';tabFmd.style.background='transparent';tabFmd.style.color='#64748b';tabFmd.style.fontWeight='500';tabFmd.style.boxShadow='none';if(panelTests)panelTests.style.display='';if(panelFmd)panelFmd.style.display='none';if(actTests)actTests.style.display='';if(actFmd)actFmd.style.display='none';};tabFmd.onclick=()=>{tabFmd.style.background='#fff';tabFmd.style.color='#0f172a';tabFmd.style.fontWeight='600';tabFmd.style.boxShadow='0 1px 2px rgba(0,0,0,0.06)';tabTests.style.background='transparent';tabTests.style.color='#64748b';tabTests.style.fontWeight='500';tabTests.style.boxShadow='none';if(panelTests)panelTests.style.display='none';if(panelFmd)panelFmd.style.display='';if(actTests)actTests.style.display='none';if(actFmd)actFmd.style.display='';};}$('#add-fmd-btn')?.addEventListener('click',()=>recordForm('fmd',null,{material_code:row.data.material_code,material_name:row.data.material_name,supplier:row.data.supplier,project:row.data.project}));}
 if(id==='imports')$('#import-workbooks')?.addEventListener('click',()=>confirmAction('Kiểm tra ba workbook trong thư mục dự án và nhập file chưa có. File đã thay đổi sẽ được báo cần review, không ghi đè.',async()=>{const result=await api('/imports',{method:'POST'});notify(result.map(r=>r.file+': '+r.state).join(' · '));render();}));
 if(id==='xrf-trend'){$('#trend-element').onchange=async e=>{try{content.innerHTML=await trendPage(e.target.value,window.psTrend.stage||'');bindPage(id);}catch(error){notify(error.message);}};$('#coverage-filter').onchange=e=>{$('#coverage-table').innerHTML=coverageTable(window.psTrend.coverage.filter(r=>!e.target.value||r.status===e.target.value));bindCommon($('#coverage-table'));};}
 if(id==='users')document.querySelectorAll('[data-save-user]').forEach(b=>b.onclick=()=>{const uid=b.dataset.saveUser;const role=document.querySelector(`[data-user-role="${uid}"]`).value;const active=document.querySelector(`[data-user-active="${uid}"]`).checked;confirmAction('Lưu trạng thái và quyền truy cập tài khoản này?',async()=>{await api('/users/'+uid,{method:'PUT',body:JSON.stringify({role,active})});notify('Đã cập nhật tài khoản.');render();});});
@@ -571,8 +2567,162 @@ function materialSuppliers(row){
   }).join('')||empty('Chưa xác định nhà cung cấp','Bổ sung nhà cung cấp trong thông tin NVL hoặc hồ sơ nguồn.')} ${declarations.some(r=>!r.data.supplier)?`<h3>Cam kết chưa xác định nhà cung cấp</h3>${rowTable(declarations.filter(r=>!r.data.supplier))}`:''}</div></section>`;
 }
 function supplierContext(row){
-  const related=row.related||[],declarations=declarationRows(related),general=declarations.filter(r=>!r.data.material_code),specific=declarations.filter(r=>r.data.material_code);
-  return `<section class="card"><div class="card-header"><h3>Vật liệu nhà cung cấp đang cung cấp</h3></div>${rowTable(row.materials||[])}</section><section class="card"><div class="card-header"><h3>Cam kết & tài liệu nhà cung cấp</h3>${can('declarations','Create')?`<button data-context-declaration="${esc(row.data.supplier)}">+ Thêm cam kết</button>`:''}</div><div class="card-body"><h3>Cam kết chung / Chưa gắn mã vật liệu</h3><p class="muted">Xem phạm vi trên tài liệu; không tự áp dụng cho mọi vật liệu.</p>${rowTable(general,['name','expiry','status'])}<h3>Cam kết theo vật liệu</h3>${specific.map(r=>`<div class="supplier-context"><small>Mã vật liệu: ${esc(r.data.material_code)}</small>${rowTable([r],['name','expiry','status'])}</div>`).join('')||'<p class="muted">Chưa có cam kết theo vật liệu.</p>'}<h3>Tài liệu khác</h3>${rowTable(related.filter(r=>!['declarations','material-declarations','bom'].includes(r.module)))}</div></section>`;
+  const d = row.data || {};
+  const related = row.related || [];
+  const declarations = declarationRows(related);
+  const materials = row.materials || [];
+  const now = new Date();
+
+  const status = d.evaluation_status || 'Pending';
+  const grade = d.audit_grade || 'Chưa xếp loại';
+  const lastAudit = d.last_audit_date;
+  const nextAudit = d.next_audit_date;
+
+  let scheduleBadge = '<span style="color:#94a3b8">—</span>';
+  if (nextAudit) {
+    const days = Math.ceil((new Date(nextAudit) - now) / (1000 * 60 * 60 * 24));
+    if (days < 0) {
+      scheduleBadge = `<span class="badge" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-size:11px;font-weight:700">✕ Quá hạn ${Math.abs(days)} ngày</span>`;
+    } else if (days <= 60) {
+      scheduleBadge = `<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:11px;font-weight:700">⚠️ Sắp đến hạn (${days} ngày)</span>`;
+    } else {
+      scheduleBadge = `<span class="badge" style="background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;font-size:11px;font-weight:700">✓ Còn ${days} ngày</span>`;
+    }
+  }
+
+  return `
+    <!-- Card 1: Hồ sơ Đánh giá định kỳ & Audit Schedule -->
+    <section class="card detail-compact-card" style="margin-bottom:8px">
+      <div class="card-header" style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+        <div style="display:flex;align-items:center;gap:8px">
+          <h3 style="font-size:13px;margin:0;font-weight:700;color:#0f172a">📋 Hồ sơ Đánh giá định kỳ & Audit Schedule</h3>
+          ${badge(status)}
+          <span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-weight:600">${esc(grade)}</span>
+        </div>
+        <button type="button" class="primary" id="edit-supplier-eval-btn" style="padding:4px 12px;font-size:11.5px;display:flex;align-items:center;gap:4px">
+          ✏️ Cập nhật đánh giá
+        </button>
+      </div>
+      <div class="card-body" style="padding:10px 14px">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:10px">
+          <div class="detail-item">
+            <small style="text-transform:uppercase;color:#64748b;font-weight:600;font-size:10px">Tình trạng đánh giá</small>
+            <div style="margin-top:2px">${badge(status)}</div>
+          </div>
+          <div class="detail-item">
+            <small style="text-transform:uppercase;color:#64748b;font-weight:600;font-size:10px">Xếp loại chất lượng</small>
+            <div style="font-weight:650;color:#0f172a;font-size:12px;margin-top:2px">${esc(grade)}</div>
+          </div>
+          <div class="detail-item">
+            <small style="text-transform:uppercase;color:#64748b;font-weight:600;font-size:10px">Ngày đánh giá gần nhất</small>
+            <div style="font-weight:600;font-size:12px;margin-top:2px">${dateText(lastAudit)}</div>
+          </div>
+          <div class="detail-item">
+            <small style="text-transform:uppercase;color:#64748b;font-weight:600;font-size:10px">Hạn đánh giá tiếp theo</small>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+              <span style="font-weight:650;font-size:12px">${dateText(nextAudit)}</span>
+              ${scheduleBadge}
+            </div>
+          </div>
+        </div>
+        ${d.evaluation_notes ? `
+          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px;margin-top:4px">
+            <small style="font-weight:700;color:#475569;display:block;margin-bottom:2px">Ghi chú & Nhận xét đánh giá:</small>
+            <p style="margin:0;font-size:11.5px;color:#334155;white-space:pre-wrap">${esc(d.evaluation_notes)}</p>
+          </div>
+        ` : ''}
+      </div>
+    </section>
+
+    <!-- Card 2: Danh sách NVL NCC đang cung cấp -->
+    <section class="card detail-compact-card" style="margin-bottom:8px">
+      <div class="card-header" style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+        <h3 style="font-size:12.5px;margin:0;font-weight:700;color:#0f172a">
+          📦 Danh sách các NVL NCC đang cấp (${materials.length} NVL)
+        </h3>
+        ${can('materials','Create')?`<button type="button" class="link-button" onclick="recordForm('materials',null,{supplier:'${esc(d.supplier||'')}'})" style="font-size:11px">+ Thêm NVL cho NCC này</button>`:''}
+      </div>
+      ${materials.length ? `
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Mã NVL</th>
+                <th>Tên NVL</th>
+                <th>Phân loại</th>
+                <th>Dự án</th>
+                <th>Trạng thái sử dụng</th>
+                <th>Tuân thủ</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${materials.map(m => `
+                <tr>
+                  <td><button type="button" class="link-button" data-open="${m.id}" style="font-weight:700;font-size:12px">${esc(m.data?.material_code || '—')}</button></td>
+                  <td>${esc(m.data?.material_name || '—')}</td>
+                  <td><span class="badge" style="background:#f1f5f9;color:#334155">${esc(m.data?.category || 'Raw material')}</span></td>
+                  <td>${esc(m.data?.project || '—')}</td>
+                  <td><span class="badge" style="background:#f8fafc;border:1px solid #cbd5e1;color:#475569">${esc(m.data?.usage_status || 'Đang sử dụng')}</span></td>
+                  <td>${badge(m.display_status)}</td>
+                  <td><button type="button" class="link-button" data-open="${m.id}">👁️ Chi tiết</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : empty('Chưa có danh mục NVL', 'Nhà cung cấp này chưa được gán cho vật liệu nào trong Danh mục NVL hoặc BOM.')}
+    </section>
+
+    <!-- Card 3: Cam kết Declaration & MSDS -->
+    <section class="card detail-compact-card" style="margin-bottom:8px">
+      <div class="card-header" style="padding:8px 14px;display:flex;justify-content:space-between;align-items:center">
+        <h3 style="font-size:12.5px;margin:0;font-weight:700;color:#0f172a">
+          📜 Cam kết & Tuyên bố tuân thủ (Declarations & MSDS) (${declarations.length})
+        </h3>
+        ${can('declarations','Create')?`<button type="button" data-context-declaration="${esc(d.supplier||'')}" style="font-size:11px;padding:2px 8px">+ Thêm cam kết</button>`:''}
+      </div>
+      ${declarations.length ? `
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Tên Cam kết / Số hiệu</th>
+                <th>Mã NVL áp dụng</th>
+                <th>Ngày cấp</th>
+                <th>Hạn cam kết</th>
+                <th>Tệp đính kèm</th>
+                <th>Trạng thái</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${declarations.map(dc => {
+                const f = dc.files && dc.files.length > 0 ? dc.files[0] : null;
+                return `
+                  <tr>
+                    <td><b>${esc(dc.data?.declaration_no || 'Declaration')}</b></td>
+                    <td>${esc(dc.data?.material_code || 'Chung cho NCC')}</td>
+                    <td>${dateText(dc.data?.issue_date)}</td>
+                    <td>${dateText(dc.data?.expiry_date)}</td>
+                    <td>
+                      ${f ? `
+                        <a href="/api/evidence/${f.id}" target="_blank" style="color:#2563eb;font-weight:600;font-size:11px;text-decoration:none">
+                          📄 ${esc(f.name)} 📥
+                        </a>
+                      ` : '<span style="color:#94a3b8;font-size:11px">—</span>'}
+                    </td>
+                    <td>${badge(dc.display_status || dc.data?.approval || 'Approved')}</td>
+                    <td><button type="button" class="link-button" data-open="${dc.id}">Xem →</button></td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : empty('Chưa có bản cam kết Declaration', 'Bấm nút "+ Thêm cam kết" để bổ sung file cam kết tuân thủ của nhà cung cấp.')}
+    </section>
+  `;
 }
 function bindSupplyContext(row){
   content.querySelectorAll('[data-material-tab]').forEach(b=>b.onclick=()=>{
@@ -733,6 +2883,7 @@ async function render() {
   if(currentModule!==route){
     currentModule=route;
     listState={page:1,q:'',status:'',start:'',end:'',sort:'updated_at',direction:'desc',size:listState.size||getOptimalPageSize()};
+    window.listState = listState;
   }
   content.classList.toggle('quality-dashboard-page',route==='dashboard');
   if($('#topbar-updated'))$('#topbar-updated').hidden=true;
@@ -795,6 +2946,23 @@ async function render() {
     $('#retry-page').onclick=render;
   }
 }
+
+window.render = render;
+window.setFilterStatus = (status) => {
+  listState.status = status || '';
+  listState.page = 1;
+  render();
+};
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-status-filter]');
+  if (btn) {
+    e.preventDefault();
+    listState.status = btn.dataset.statusFilter || '';
+    listState.page = 1;
+    render();
+  }
+});
 
 const collapseBtn = document.getElementById('collapse');
 if(collapseBtn) collapseBtn.onclick = () => toggleSidebar();

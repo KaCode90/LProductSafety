@@ -29,7 +29,7 @@ for key, title in [('cts-2','CTS_2 – IQC / OQC'),('cts-3','CTS_3 – VOC / SVH
 module('cts-1', 'CTS_1 – Chất hạn chế', 'materials', RSS_FIELDS, '', common=False)
 module('declarations','Tuyên bố tuân thủ','materials',fields([('declaration_no','Declaration No.','text',None,True),('material_code','Mã vật liệu'),('supplier','Nhà cung cấp'),('scope','Phạm vi','textarea'),('issue_date','Ngày phát hành','date'),('expiry_date','Ngày hết hạn','date'),('approval','Phê duyệt','select',['Pending','Approved','Rejected'])]))
 module('materials','Danh mục NVL','materials',MATERIAL,'')
-module('suppliers','Nhà cung cấp','materials',fields([('supplier','Nhà cung cấp','text',None,True),('manufacturer','Nhà sản xuất'),('contact','Người liên hệ'),('email','Email','email'),('phone','Điện thoại'),('address','Địa chỉ','textarea')]), '', False)
+module('suppliers','Nhà cung cấp','materials',fields([('supplier','Nhà cung cấp','text',None,True),('evaluation_status','Tình trạng đánh giá','select',['Approved','Qualified','Conditional','Pending','Blacklist']),('audit_grade','Xếp loại / Grade','select',['Hạng A (Xuất sắc)','Hạng B (Đạt)','Hạng C (Cần cải tiến)','Hạng D (Không đạt)']),('last_audit_date','Ngày đánh giá gần nhất','date'),('next_audit_date','Hạn đánh giá tiếp theo','date'),('contact','Người liên hệ'),('email','Email','email'),('phone','Điện thoại'),('address','Địa chỉ','textarea'),('evaluation_notes','Ghi chú đánh giá','textarea')]), '', False)
 module('reports','Báo cáo thử nghiệm / TRM','materials',REPORT,'')
 module('material-declarations','Tuyên bố / Declaration','materials',MODULES['declarations']['fields'],common=False)
 module('fmd','FMD – Thành phần & CAS','materials',fields([('material_code','Mã vật liệu','text',None,True),('material_name','Tên vật liệu'),('project','Project'),('supplier','Supplier'),('cas','CAS No.'),('substance','Substance Name','text',None,True),('composition','Composition (%)'),('test_type','Test Report'),('report_id','Test Report ID'),('lab','Test Lab'),('issue_date','Certification Date','date'),('expiry_date','Expiration Date','date'),('flag','Flag','textarea'),('investigation','Flag Investigation','textarea'),('result','Kết quả nguồn')]),'')
@@ -49,6 +49,7 @@ module('capa','CAPA','management',fields([('capa_no','CAPA No.','text',None,True
 for key,title in [('procedures','Quy trình & Tiêu chuẩn'),('documents','Hồ sơ'),('retention-records','Lưu mẫu / Lưu dữ liệu'),('appendices','Phụ lục')]:
     module(key,title,'documents',DOC)
 module('master-data','Master Data','settings',fields([('category','Danh mục','select',['Supplier','Manufacturer','Material Type','Project','CTS Category','Compliance Status','Department','Test Type','Laboratory','Document Category','Risk Category'],True),('value','Giá trị','text',None,True)]))
+module('test-types','Cấu hình loại kiểm nghiệm','settings',fields([('name','Tên loại kiểm nghiệm','text',None,True),('standard','Tiêu chuẩn áp dụng','text'),('description','Mô tả & Ghi chú','textarea'),('default_selected','Mặc định áp dụng','select',['Có','Không'])]),'',False)
 
 GROUPS = [('dashboard','Dashboard'),('materials','Sản phẩm & Vật liệu'),('management','Quản lý'),('documents','Trung tâm tài liệu'),('settings','Cài đặt')]
 SPECIAL = {'dashboard': [('dashboard','Dashboard')], 'materials':[('xrf-trend','XRF – Xu hướng & thực hiện')], 'documents':[('imports','Nguồn Excel & đối chiếu')], 'settings':[('users','Quản lý người dùng'),('roles','Vai trò & Phân quyền'),('notifications','Cài đặt thông báo'),('retention','Quy định lưu trữ'),('system','Cấu hình hệ thống')]}
@@ -57,7 +58,7 @@ SPECIAL = {'dashboard': [('dashboard','Dashboard')], 'materials':[('xrf-trend','
 def catalog():
     groups=[]
     materials_order = ['materials', 'suppliers', 'test-plan', 'xrf']
-    settings_order = ['xrf-standard', 'bom', 'master-data', 'users', 'roles', 'notifications', 'retention', 'system']
+    settings_order = ['xrf-standard', 'bom', 'test-types', 'master-data', 'users', 'roles', 'notifications', 'retention', 'system']
     for key,title in GROUPS:
         items=[{'id':k,'name':v['title']} for k,v in MODULES.items() if v['group']==key]
         items += [{'id':k,'name':v} for k,v in SPECIAL.get(key,[])]

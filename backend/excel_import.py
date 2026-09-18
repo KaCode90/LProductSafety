@@ -255,7 +255,7 @@ def import_project_bom(db):
             'project': it['project'],
             'category': it['category'],
             'status': 'Active',
-            'required_tests': 'RoHS, Halogen-Free'
+            'required_tests': ''
         }
         if mat_key in existing_mats:
             m_rec = existing_mats[mat_key]
@@ -268,8 +268,6 @@ def import_project_bom(db):
                 'project': it['project'],
                 'category': it['category'],
             })
-            if not merged_data.get('required_tests'):
-                merged_data['required_tests'] = 'RoHS, Halogen-Free'
             if not merged_data.get('status'):
                 merged_data['status'] = 'Active'
             m_rec.data = merged_data
@@ -314,4 +312,3 @@ def import_project_bom(db):
 
     db.commit()
     return {'status': 'ok', 'bom_count': len(valid_bom_keys), 'materials_count': len(valid_mat_keys), 'total_items': len(items)}
-

@@ -44,6 +44,8 @@ def derived_status(module, data, standards, today=None):
     today=today or date.today()
     if module in ('xrf-iqc','xrf-oqc','change-control'):
         return xrf_evaluation(data,standards)['status']
+    if module=='suppliers':
+        return data.get('evaluation_status') or 'Pending'
     status=str(data.get('status','Pending'))
     expiry=data.get('expiry_date') or data.get('due_date') or data.get('review_date')
     try:

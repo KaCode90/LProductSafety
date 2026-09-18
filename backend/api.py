@@ -58,7 +58,7 @@ def serialize(row,limits):
     data=dict(row.data)
     if row.module=='materials':
         data['usage_status']=data.get('usage_status') or 'Đang sử dụng'
-        data['dossier_status']=data.get('dossier_status') or {'Compliant':'Đạt yêu cầu','Pending':'Chờ đánh giá','NG':'Cần cập nhật','Expired':'Cần cập nhật'}.get(data.get('status'),'Chưa đánh giá')
+        data['status']=data.get('status') or 'Active'
     mat_display_status = data.get('status') or data.get('usage_status') or 'Đang sử dụng'
     return {'id':row.id,'module':row.module,'data':data,'version':row.version,'updated_at':row.updated_at.isoformat(),
             'display_status':mat_display_status if row.module=='materials' else derived_status(row.module,row.data,limits)}
@@ -171,7 +171,14 @@ def detail(record_id:int,user:Account=Depends(current_user),db:Session=Depends(g
         codes={r.data.get('material_code') for r in supplied if r.module in ('materials','bom','fmd','reports') and r.data.get('material_code')}
         codes.update(code.strip() for code in str(row.data.get('material_codes','')).splitlines() if code.strip())
         result['related']=[serialize(r,limits) for r in supplied if r.module!='materials']
-        result['materials']=[serialize(r,limits) for r in visible if r.module=='materials' and r.data.get('material_code') in codes]
+        related_ids=[r.id for r in supplied]
+        attachments={}
+        if related_ids:
+            for evidence in db.scalars(select(Evidence).where(Evidence.record_id.in_(related_ids))).all():
+                attachments.setdefault(evidence.record_id,[]).append({'id':evidence.id,'name':evidence.name})
+        for item in result['related']:
+            item['files']=attachments.get(item['id'],[])
+        result['materials']=[serialize(r,limits) for r in visible if r.module=='materials' and (r.data.get('material_code') in codes or (name and r.data.get('supplier')==name))]
     if row.module=='bom':
         code=row.data.get('material_code')
         result['materials']=[serialize(r,limits) for r in all_visible(db,user) if code and r.module=='materials' and r.data.get('material_code')==code]
